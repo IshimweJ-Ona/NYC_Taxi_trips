@@ -20,7 +20,7 @@
                   - `zones_geo_cleaned.geojson`
                   - `excluded_records.csv`
 
-Check the image named Option_A to see what you get if you choose option_A.
+Check the **image** named **Option_A** to see what you get if you choose option_A.
 
 
 ## Option B: Start from Raw data
