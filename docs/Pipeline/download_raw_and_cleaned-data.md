@@ -8,7 +8,7 @@
 ## Option A: Use Cleaned  Data
 - Recommended if yu don't want to run full data processing pipeline. This cleaned data is the one use for backend and frontend.
 
-1. **Cleaned_data Link**: (`https://drive.google.com/file/d/1Z_WFoA-xPxYNFa-x4TENL1Y4XblW2CW6/view?usp=sharing`)
+1. **Cleaned_data Link**: (https://drive.google.com/file/d/1Z_WFoA-xPxYNFa-x4TENL1Y4XblW2CW6/view?usp=sharing)
 2. Extract the downloaded folder into the project root directory: `cleaned_data/`
 3. Run pipeline: Just for check up if all files cleaned up are present.
        - Windows: `python data_pipeline/run_pipeline.py`
@@ -27,7 +27,7 @@ Check the **image** named **Option_A** to see what you get if you choose option_
 The option is here is when you want to restart the whole data processing from raw datasets.
 
 1. Download Raw Data
-**Raw_data Link**: (`https://drive.google.com/file/d/12eRk5ZE5KwkeeKcJAdHzxS9MF0UQA9Bp/view?usp=sharing`)
+**Raw_data Link**: (https://drive.google.com/file/d/12eRk5ZE5KwkeeKcJAdHzxS9MF0UQA9Bp/view?usp=sharing)
 
 - After extraction the directory should look like:
 ```

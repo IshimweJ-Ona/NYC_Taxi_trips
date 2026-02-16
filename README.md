@@ -44,4 +44,4 @@ NYC_Taxi_trips/
 ```
 
 ## Simplified system Architecure
-**System Architecture Link**: (`https://drive.google.com/file/d/1paM_y9yGavcYh1p_ihe1HPoM7qEZtic9/view?usp=sharing`)
+**System Architecture Link**: (https://drive.google.com/file/d/1paM_y9yGavcYh1p_ihe1HPoM7qEZtic9/view?usp=sharing)
