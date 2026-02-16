@@ -1,0 +1,14 @@
+venv/
+.env/
+
+__pycache__/
+*.pyc
+
+# Data files
+data/raw/
+data/parquet/
+data/geojson/
+data/cleaned/
+*.csv
+*.parquet
+*.geojson

@@ -1,0 +1,9 @@
+pandas
+numpy
+geopandas
+shapely
+fiona
+pyproj
+rtree
+pyarrow
+fastparquet
