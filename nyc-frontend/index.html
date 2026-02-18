@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Urban Mobility Data Explorer</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="loading-screen">
+        <div class="loading-content">
+            <div class="loading-spinner"></div>
+            <div class="loading-text">Loading Trip Data...</div>
+        </div>
+    </div>
+
+    <!-- Navigation Header -->
+    <header class="main-header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <h1>NYC Mobility Explorer</h1>
+                    <span class="tagline">Analyzing Urban Transportation Patterns</span>
+                </div>
+                <nav class="main-nav">
+                    <a href="#overview" class="nav-link active">Overview</a>
+                    <a href="#insights" class="nav-link">Insights</a>
+                    <a href="#map-section" class="nav-link">Map</a>
+                    <a href="#data" class="nav-link">Data</a>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Statistics Section -->
+    <section class="hero-stats" id="overview">
+        <div class="container">
+            <div class="hero-title-section">
+                <h2 class="hero-title">Trip Analytics Dashboard</h2>
+                <p class="hero-description">Real-time insights from NYC taxi trip records</p>
+            </div>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 11H15M9 15H12M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z"/>
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number" id="total-trips">0</div>
+                        <div class="stat-label">Total Trips</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M13 7L9 12L11 12L8 17M21 12C21 16.9706 16.9706 21 12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12Z"/>
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number" id="avg-distance">0</div>
+                        <div class="stat-label">Avg Distance</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number" id="avg-duration">0</div>
+                        <div class="stat-label">Avg Speed</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                        </svg>
+                    </div>
+                    <div class="stat-content">
+                        <div class="stat-number" id="total-revenue">$0</div>
+                        <div class="stat-label">Avg Fare</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Filters Section -->
+    <section class="filters-section">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">Filter Data</h2>
+                <div class="filter-actions">
+                    <button id="reset-filters" class="btn-secondary">Reset Filters</button>
+                    <label class="custom-sort-label">
+                        <input type="checkbox" id="custom-sort-toggle">
+                        Use Custom Sort Algorithm
+                    </label>
+                </div>
+            </div>
+            
+            <div class="filters-container">
+                <div class="filter-row">
+                    <!-- Distance Range -->
+                    <div class="filter-group range-group">
+                        <label class="filter-label">Distance Range (km)</label>
+                        <div class="range-inputs">
+                            <input type="number" id="min-distance" class="range-input" min="0" max="100" value="0" step="1">
+                            <span class="range-separator">to</span>
+                            <input type="number" id="max-distance" class="range-input" min="0" max="100" value="100" step="1">
+                        </div>
+                    </div>
+
+                    <!-- Fare Range -->
+                    <div class="filter-group range-group">
+                        <label class="filter-label">Fare Range ($)</label>
+                        <div class="range-inputs">
+                            <input type="number" id="min-fare" class="range-input" min="0" max="200" value="0" step="5">
+                            <span class="range-separator">to</span>
+                            <input type="number" id="max-fare" class="range-input" min="0" max="200" value="200" step="5">
+                        </div>
+                    </div>
+
+                    <!-- Peak Hour Filter -->
+                    <div class="filter-group">
+                        <label class="filter-label">Peak Hours</label>
+                        <select id="peak-filter" class="filter-select">
+                            <option value="all">All Hours</option>
+                            <option value="peak">Peak Hours Only</option>
+                            <option value="off-peak">Off-Peak Only</option>
+                        </select>
+                    </div>
+
+                    <!-- Weekend Filter -->
+                    <div class="filter-group">
+                        <label class="filter-label">Day Type</label>
+                        <select id="weekend-filter" class="filter-select">
+                            <option value="all">All Days</option>
+                            <option value="weekend">Weekends</option>
+                            <option value="weekday">Weekdays</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Insights Section -->
+    <section class="insights-section" id="insights">
+        <div class="container">
+            <h2 class="section-title">Data Insights</h2>
+            <div class="insights-grid">
+                <!-- Hourly Distribution Chart -->
+                <div class="insight-card">
+                    <div class="insight-header">
+                        <h3 class="insight-title">Trips by Hour</h3>
+                        <p class="insight-description">Peak hours: 8-9 AM and 6-7 PM</p>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="hourly-trips-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Payment Distribution -->
+                <div class="insight-card">
+                    <div class="insight-header">
+                        <h3 class="insight-title">Payment Methods</h3>
+                        <p class="insight-description">Distribution of payment types</p>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="payment-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Map Section -->
+    <section class="map-section" id="map-section">
+        <div class="container">
+            <h2 class="section-title">Trip Visualization Map</h2>
+            
+            <div class="map-controls">
+                <div class="toggle-buttons">
+                    <button id="show-pickups" class="toggle-btn active">Pickup Locations</button>
+                    <button id="show-dropoffs" class="toggle-btn">Dropoff Locations</button>
+                    <button id="show-heatmap" class="toggle-btn">Trip Routes</button>
+                </div>
+                <select id="map-limit" class="map-select">
+                    <option value="50">Show 50 trips</option>
+                    <option value="100" selected>Show 100 trips</option>
+                    <option value="200">Show 200 trips</option>
+                </select>
+            </div>
+
+            <div id="trip-map" class="trip-map"></div>
+
+            <div class="map-legend">
+                <div class="legend-item">
+                    <div class="legend-marker pickup-marker"></div>
+                    <span>Pickup Location</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-marker dropoff-marker"></div>
+                    <span>Dropoff Location</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-marker route-marker"></div>
+                    <span>Trip Route</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Data Table Section -->
+    <section class="data-section" id="data">
+        <div class="container">
+            <div class="section-header">
+                <h2 class="section-title">Trip Records</h2>
+                <button id="export-csv" class="btn-primary">Export to CSV</button>
+            </div>
+
+            <div class="data-info">
+                <span>Showing <strong id="showing-count">0</strong> of <strong id="total-count">0</strong> trips</span>
+            </div>
+
+            <div class="table-container">
+                <table class="trips-table">
+                    <thead>
+                        <tr>
+                            <th>Pickup Time</th>
+                            <th>Pickup Location</th>
+                            <th>Dropoff Location</th>
+                            <th>Distance</th>
+                            <th>Duration</th>
+                            <th>Fare</th>
+                            <th>Passengers</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trips-table-body">
+                        <!-- Populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Pagination -->
+            <div class="pagination">
+                <button id="prev-page" class="page-btn">← Previous</button>
+                <div id="page-numbers" class="page-numbers">
+                    <!-- Populated by JavaScript -->
+                </div>
+                <button id="next-page" class="page-btn">Next →</button>
+            </div>
+        </div>
+    </section>
+
+    <!-- Trip Details Modal -->
+    <div id="trip-modal" class="modal">
+        <div class="modal-overlay"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Trip Details</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div id="modal-body" class="modal-body">
+                <!-- Populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="main-footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-section">
+                    <h4>NYC Urban Mobility Data Explorer</h4>
+                    <p>Analyzing taxi trip patterns to understand urban transportation dynamics</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Data Source</h4>
+                    <p>NYC Taxi & Limousine Commission (TLC)</p>
+                </div>
+                <div class="footer-section">
+                    <h4>Technologies</h4>
+                    <p>Chart.js, Leaflet.js, Flask API</p>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                <p>&copy; 2024 NYC Mobility Explorer. Educational Project.</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
