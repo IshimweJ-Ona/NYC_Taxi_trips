@@ -3,13 +3,16 @@ venv/
 
 __pycache__/
 *.pyc
+*.log
 
 # Data files
 data/raw/
 data/parquet/
 data/geojson/
 data/cleaned/
+data/processed/
 data/taxi_zones/
+data/logs/
 *.csv
 *.parquet
 *.geojson
@@ -20,3 +23,6 @@ data/taxi_zones/
 *.shp
 *.xml
 *.shx
+*.db
+*.zip
+*.part

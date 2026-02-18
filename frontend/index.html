@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NYC Urban Mobility Explorer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <header>
+        <h1>Urban Mobility Data Explorer</h1>
+        <p>Analyzing NYC Taxi Trip Patterns</p>
+    </header>
+
+    <main>
+        <section id="filters" class="dashboard-panel">
+            <h2>Filters</h2>
+            <form id="filter-form">
+                <div class="filter-group">
+                    <label for="startPool">Start Date:</label>
+                    <input type="date" id="startDate" name="start_date">
+                </div>
+                <div class="filter-group">
+                    <label for="endDate">End Date:</label>
+                    <input type="date" id="endDate" name="end_date">
+                </div>
+                <div class="filter-group">
+                    <label for="minDist">Min Distance (km):</label>
+                    <input type="number" id="minDist" name="min_distance" step="0.1">
+                </div>
+                <div class="filter-group">
+                    <label for="useCustomSort">Use Manual Sort (Custom Algo):</label>
+                    <input type="checkbox" id="useCustomSort" name="custom_sort">
+                </div>
+                <button type="submit">Apply Filters</button>
+            </form>
+        </section>
+
+        <section id="summary" class="dashboard-panel">
+            <div class="kpi-card">
+                <h3>Total Trips</h3>
+                <span id="total-trips">-</span>
+            </div>
+            <div class="kpi-card">
+                <h3>Avg Fare</h3>
+                <span id="avg-fare">-</span>
+            </div>
+            <div class="kpi-card">
+                <h3>Avg Speed (km/h)</h3>
+                <span id="avg-speed">-</span>
+            </div>
+        </section>
+
+        <section id="visualizations" class="dashboard-panel">
+            <h2>Activity Overview</h2>
+            <div id="hourly-chart" class="chart-container">
+                <p>Chart Placeholder</p>
+            </div>
+        </section>
+
+        <section id="results" class="dashboard-panel">
+            <h2>Trip Data</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Pickup Time</th>
+                        <th>Distance (km)</th>
+                        <th>Fare ($)</th>
+                        <th>Tip ($)</th>
+                        <th>Efficiency</th>
+                    </tr>
+                </thead>
+                <tbody id="trips-table-body">
+                </tbody>
+            </table>
+            <div id="pagination-controls">
+                <button id="prev-page">Previous</button>
+                <span id="page-info">Page 1</span>
+                <button id="next-page">Next</button>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Team Project: Urban Mobility Explorer</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
