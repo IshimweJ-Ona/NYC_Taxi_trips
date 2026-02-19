@@ -149,6 +149,32 @@
                         </select>
                     </div>
                 </div>
+                <div class="filter-row">
+                    <div class="filter-group">
+                        <label class="filter-label">Pickup Borough</label>
+                        <select id="pickup-borough-filter" class="filter-select">
+                            <option value="all">All Boroughs</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Pickup Zone</label>
+                        <select id="pickup-zone-filter" class="filter-select">
+                            <option value="all">All Zones</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Dropoff Borough</label>
+                        <select id="dropoff-borough-filter" class="filter-select">
+                            <option value="all">All Boroughs</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label class="filter-label">Dropoff Zone</label>
+                        <select id="dropoff-zone-filter" class="filter-select">
+                            <option value="all">All Zones</option>
+                        </select>
+                    </div>
+                </div>
             </div>
         </div>
     </section>
@@ -194,6 +220,10 @@
                     <button id="show-dropoffs" class="toggle-btn">Dropoff Locations</button>
                     <button id="show-heatmap" class="toggle-btn">Trip Routes</button>
                 </div>
+                <label class="custom-sort-label">
+                    <input type="checkbox" id="zone-layer-toggle">
+                    Show Taxi Zones
+                </label>
                 <select id="map-limit" class="map-select">
                     <option value="50">Show 50 trips</option>
                     <option value="100" selected>Show 100 trips</option>

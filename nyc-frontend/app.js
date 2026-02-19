@@ -25,7 +25,11 @@ const AppState = {
         is_peak_hour: null,
         is_weekend: null,
         passenger_count: null,
-        payment_type: null
+        payment_type: null,
+        pickup_borough: null,
+        pickup_zone: null,
+        dropoff_borough: null,
+        dropoff_zone: null
     },
     charts: {},
     map: null,
@@ -33,8 +37,17 @@ const AppState = {
     mapMode: 'pickups',
     mapLimit: 100,
     useCustomSort: false,
-    summary: null
+    summary: null,
+    zones: [],
+    boroughs: [],
+    zoneLayer: null,
+    zoneLayerVisible: false
 };
+
+// Prefer the canonical id field from the API, but fall back for legacy data.
+function getTripId(trip) {
+    return trip.id ?? trip.trip_id;
+}
 
 // ==========================================
 // INITIALIZATION
@@ -62,6 +75,7 @@ async function initializeApp() {
     try {
         console.log('Fetching trip data from API...');
         
+        await fetchZonesMetadata();
         await Promise.all([
             fetchTrips(),
             fetchSummary()
@@ -148,6 +162,25 @@ async function fetchSummary() {
     }
 }
 
+async function fetchZonesMetadata() {
+    try {
+        const [boroughRes, zonesRes] = await Promise.all([
+            fetch(`${API_BASE}/api/zones/boroughs`),
+            fetch(`${API_BASE}/api/zones`)
+        ]);
+        
+        AppState.boroughs = boroughRes.ok ? await boroughRes.json() : [];
+        AppState.zones = zonesRes.ok ? await zonesRes.json() : [];
+        
+        populateBoroughSelects();
+        populateZoneSelects();
+        
+        console.log('✓ Zone metadata loaded');
+    } catch (error) {
+        console.error('Error fetching zone metadata:', error);
+    }
+}
+
 // ==========================================
 // EVENT LISTENERS
 // ==========================================
@@ -159,6 +192,16 @@ function setupEventListeners() {
     document.getElementById('max-fare')?.addEventListener('change', handleFilterChange);
     document.getElementById('peak-filter')?.addEventListener('change', handleFilterChange);
     document.getElementById('weekend-filter')?.addEventListener('change', handleFilterChange);
+    document.getElementById('pickup-borough-filter')?.addEventListener('change', () => {
+        updateZoneOptions('pickup-zone-filter', document.getElementById('pickup-borough-filter')?.value);
+        handleFilterChange();
+    });
+    document.getElementById('pickup-zone-filter')?.addEventListener('change', handleFilterChange);
+    document.getElementById('dropoff-borough-filter')?.addEventListener('change', () => {
+        updateZoneOptions('dropoff-zone-filter', document.getElementById('dropoff-borough-filter')?.value);
+        handleFilterChange();
+    });
+    document.getElementById('dropoff-zone-filter')?.addEventListener('change', handleFilterChange);
     
     // Reset filters
     document.getElementById('reset-filters')?.addEventListener('click', resetFilters);
@@ -193,6 +236,10 @@ function setupEventListeners() {
         AppState.mapLimit = parseInt(e.target.value);
         updateMap();
     });
+    document.getElementById('zone-layer-toggle')?.addEventListener('change', (e) => {
+        AppState.zoneLayerVisible = e.target.checked;
+        updateZoneLayer();
+    });
 }
 
 // ==========================================
@@ -211,6 +258,18 @@ async function handleFilterChange() {
     const weekendValue = document.getElementById('weekend-filter')?.value;
     AppState.filters.is_weekend = weekendValue === 'all' ? null : (weekendValue === 'weekend' ? 'true' : 'false');
     
+    const pickupBorough = document.getElementById('pickup-borough-filter')?.value;
+    AppState.filters.pickup_borough = pickupBorough === 'all' ? null : pickupBorough;
+    
+    const pickupZone = document.getElementById('pickup-zone-filter')?.value;
+    AppState.filters.pickup_zone = pickupZone === 'all' ? null : pickupZone;
+    
+    const dropoffBorough = document.getElementById('dropoff-borough-filter')?.value;
+    AppState.filters.dropoff_borough = dropoffBorough === 'all' ? null : dropoffBorough;
+    
+    const dropoffZone = document.getElementById('dropoff-zone-filter')?.value;
+    AppState.filters.dropoff_zone = dropoffZone === 'all' ? null : dropoffZone;
+    
     // Reset to page 1
     AppState.currentPage = 1;
     
@@ -220,6 +279,7 @@ async function handleFilterChange() {
     
     // Update UI
     updateDashboard();
+    updateZoneLayer();
 }
 
 function resetFilters() {
@@ -230,6 +290,10 @@ function resetFilters() {
     if (document.getElementById('max-fare')) document.getElementById('max-fare').value = 200;
     if (document.getElementById('peak-filter')) document.getElementById('peak-filter').value = 'all';
     if (document.getElementById('weekend-filter')) document.getElementById('weekend-filter').value = 'all';
+    if (document.getElementById('pickup-borough-filter')) document.getElementById('pickup-borough-filter').value = 'all';
+    if (document.getElementById('pickup-zone-filter')) document.getElementById('pickup-zone-filter').value = 'all';
+    if (document.getElementById('dropoff-borough-filter')) document.getElementById('dropoff-borough-filter').value = 'all';
+    if (document.getElementById('dropoff-zone-filter')) document.getElementById('dropoff-zone-filter').value = 'all';
     if (document.getElementById('custom-sort-toggle')) document.getElementById('custom-sort-toggle').checked = false;
     
     // Reset state
@@ -243,7 +307,11 @@ function resetFilters() {
         is_peak_hour: null,
         is_weekend: null,
         passenger_count: null,
-        payment_type: null
+        payment_type: null,
+        pickup_borough: null,
+        pickup_zone: null,
+        dropoff_borough: null,
+        dropoff_zone: null
     };
     AppState.useCustomSort = false;
     AppState.currentPage = 1;
@@ -306,6 +374,7 @@ function updateTable() {
 
 function createTableRow(trip) {
     const row = document.createElement('tr');
+    const tripId = getTripId(trip);
     
     // Convert seconds to minutes
     const durationMinutes = Math.round(trip.trip_duration_sec / 60);
@@ -319,7 +388,7 @@ function createTableRow(trip) {
         <td>$${trip.fare_amount?.toFixed(2) || 0}</td>
         <td>${trip.passenger_count || 0}</td>
         <td>
-            <button onclick="showTripDetails(${trip.trip_id})">View</button>
+            <button onclick="showTripDetails(${tripId})">View</button>
         </td>
     `;
     
@@ -398,7 +467,7 @@ async function goToPage(page) {
 // TRIP DETAILS MODAL
 // ==========================================
 function showTripDetails(tripId) {
-    const trip = AppState.allTrips.find(t => t.trip_id === tripId);
+    const trip = AppState.allTrips.find(t => getTripId(t) === tripId);
     if (!trip) return;
     
     const modal = document.getElementById('trip-modal');
@@ -411,7 +480,7 @@ function showTripDetails(tripId) {
     modalBody.innerHTML = `
         <div class="detail-row">
             <span class="detail-label">Trip ID:</span>
-            <span class="detail-value">#${trip.trip_id}</span>
+            <span class="detail-value">#${getTripId(trip)}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Pickup Time:</span>
@@ -622,6 +691,8 @@ function updateMap() {
     } else if (AppState.mapMode === 'heatmap') {
         showTripRoutes(tripsToShow);
     }
+
+    updateZoneLayer();
 }
 
 function showPickupMarkers(trips) {
@@ -699,6 +770,97 @@ function showTripRoutes(trips) {
     });
 }
 
+function populateBoroughSelects() {
+    const pickupBorough = document.getElementById('pickup-borough-filter');
+    const dropoffBorough = document.getElementById('dropoff-borough-filter');
+    if (pickupBorough) {
+        pickupBorough.innerHTML = '<option value="all">All Boroughs</option>';
+        AppState.boroughs.forEach(borough => {
+            const option = document.createElement('option');
+            option.value = borough;
+            option.textContent = borough;
+            pickupBorough.appendChild(option);
+        });
+    }
+    if (dropoffBorough) {
+        dropoffBorough.innerHTML = '<option value="all">All Boroughs</option>';
+        AppState.boroughs.forEach(borough => {
+            const option = document.createElement('option');
+            option.value = borough;
+            option.textContent = borough;
+            dropoffBorough.appendChild(option);
+        });
+    }
+}
+
+function populateZoneSelects() {
+    updateZoneOptions('pickup-zone-filter', null);
+    updateZoneOptions('dropoff-zone-filter', null);
+}
+
+function updateZoneOptions(selectId, borough) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
+    
+    select.innerHTML = '<option value="all">All Zones</option>';
+    const zones = borough && borough !== 'all'
+        ? AppState.zones.filter(z => z.borough === borough)
+        : AppState.zones;
+    
+    zones.forEach(zone => {
+        const option = document.createElement('option');
+        option.value = zone.zone;
+        option.textContent = zone.zone;
+        select.appendChild(option);
+    });
+}
+
+async function updateZoneLayer() {
+    if (!AppState.map) return;
+    
+    if (!AppState.zoneLayerVisible) {
+        if (AppState.zoneLayer) {
+            AppState.map.removeLayer(AppState.zoneLayer);
+            AppState.zoneLayer = null;
+        }
+        return;
+    }
+    
+    const params = new URLSearchParams();
+    if (AppState.filters.pickup_borough) {
+        params.append('borough', AppState.filters.pickup_borough);
+    } else if (AppState.filters.dropoff_borough) {
+        params.append('borough', AppState.filters.dropoff_borough);
+    }
+    if (AppState.filters.pickup_zone) {
+        params.append('zone', AppState.filters.pickup_zone);
+    } else if (AppState.filters.dropoff_zone) {
+        params.append('zone', AppState.filters.dropoff_zone);
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/zones/geojson?${params.toString()}`);
+        if (!response.ok) return;
+        const geojson = await response.json();
+        
+        if (AppState.zoneLayer) {
+            AppState.map.removeLayer(AppState.zoneLayer);
+        }
+        
+        AppState.zoneLayer = L.geoJSON(geojson, {
+            style: {
+                color: '#111827',
+                weight: 1,
+                opacity: 0.6,
+                fillColor: '#60A5FA',
+                fillOpacity: 0.1
+            }
+        }).addTo(AppState.map);
+    } catch (error) {
+        console.error('Error loading zone layer:', error);
+    }
+}
+
 // ==========================================
 // EXPORT FUNCTIONALITY
 // ==========================================
@@ -710,7 +872,7 @@ function exportToCSV() {
     ];
     
     const rows = AppState.allTrips.map(trip => [
-        trip.trip_id,
+        getTripId(trip),
         trip.pickup_datetime,
         trip.dropoff_datetime,
         trip.trip_distance_km,
