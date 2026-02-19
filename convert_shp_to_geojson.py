@@ -1,6 +1,7 @@
 import geopandas as gpd
 from pathlib import Path
 
+
 # Path to file
 shapefile_path = "data/taxi_zones/taxi_zones.shp"
 geojson_path = "data/geojson/taxi_zones.geojson"

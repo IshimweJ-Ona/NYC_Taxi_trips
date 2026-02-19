@@ -1,6 +1,7 @@
 import pandas as pd
 from pathlib import Path
 
+
 RAW_DIR = Path("data/raw")
 PARQUET_DIR = Path("data/parquet")
 

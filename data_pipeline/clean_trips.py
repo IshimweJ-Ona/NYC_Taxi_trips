@@ -122,3 +122,4 @@ def clean_trip_data(trips_df: pd.DataFrame, zones_df: pd.DataFrame)-> Tuple[Data
     print(f"Excluded records: {excluded_df.shape}")
 
     return df, excluded_df
+
