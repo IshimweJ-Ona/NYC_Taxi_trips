@@ -38,7 +38,13 @@ NYC_Taxi_trips/
 ├── .gitignore                     
 ├── README.md                      
 │
-├── backend/                      
+├──backend/
+|  ├── app.py              # Main entry point (Server & Config)
+|  ├── api.py              # Route definitions & Logic 
+|  ├── database.py         # Database connection helper
+|  ├── algorithms.py       # Manual algorithm implementations (Bubble Sort, etc.)
+|  ├── init_db.py          # Database initialization script
+|  └── requirements.txt    # Python dependencies                     
 ├── frontend/                      
 
 ```
