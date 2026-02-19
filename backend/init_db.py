@@ -4,11 +4,16 @@ import sqlite3
 import logging
 from datetime import datetime
 
+# Ensure log directory exists
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+log_dir = os.path.join(base_dir, 'data', 'logs')
+os.makedirs(log_dir, exist_ok=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'logs', 'db_init.log')),
+        logging.FileHandler(os.path.join(log_dir, 'db_init.log')),
         logging.StreamHandler()
     ]
 )
