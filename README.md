@@ -1,8 +1,11 @@
 # NYC Taxi Trips - Urban Mobility Data Explorer
 Full-stack analytics system for NYC taxi trips with a data cleaning pipeline, SQLite database, Flask API, and a frontend dashboard.
 
+## Teamsheet Link
+**Team_Task_Sheet**:(https://docs.google.com/spreadsheets/d/14I3UKPqRwpI2tbFXUVgtxqpWFk0YGLgRzVdfIVEYAnA/edit?usp=sharing)
+
 ## Architecture
-System diagram: https://drive.google.com/file/d/1paM_y9yGavcYh1p_ihe1HPoM7qEZtic9/view?usp=sharing
+**System diagram**: (https://drive.google.com/file/d/1paM_y9yGavcYh1p_ihe1HPoM7qEZtic9/view?usp=sharing)
 
 ## Prerequisites
 - Python 3.10+ (tested with 3.11)
@@ -90,19 +93,54 @@ Open `http://127.0.0.1:5173`
 
 ## Project Structure
 ```
-NYC_Taxi_trips/
-├── backend/
-├── data/
-│   ├── raw/
-│   ├── parquet/
-│   ├── geojson/
-│   ├── processed/
-│   └── logs/
-├── data_pipeline/
-├── database/
-├── docs/
-├── nyc-frontend/
-├── convert_csv_to_parquet.py
-├── convert_shp_to_geojson.py
-└── README.md
+## Project Stucture
 ```
+NYC_Taxi_trips/
+│
+├── data_pipeline/                
+│   ├── load_raw_data.py
+│   ├── clean_trips.py
+│   ├── feature_engineering.py
+│   ├── excluded_records.py
+│   ├── run_pipeline.py
+│
+├── data/                         
+│   ├── raw/                       
+│   ├── parquet/                   
+│   ├── geojson/                  
+│   ├── taxi_zones/                
+│   │   ├── taxi_zones.dbf
+│   │   ├── taxi_zones.prj
+│   │   ├── taxi_zones.sbn
+│   │   ├── taxi_zones.sbx
+│   │   ├── taxi_zones.shp
+│   │   ├── taxi_zones.shp.xml
+│   │   └── taxi_zones.shx
+│   └── cleaned_data/              
+│
+├── docs/                          
+│   ├── pipeline/                  
+│   │   ├── download_raw_and_cleaned-data.md  
+│   │   ├── Option_A.png                         
+│   │   └── Pipeline_guide.md                    
+│
+├── convert_csv_to_parquet.py      
+├── convert_shp_to_geojson.py      
+├── requirements.txt               
+├── .gitignore                     
+├── README.md                      
+│
+├──backend/
+|  ├── app.py              # Main entry point (Server & Config)
+|  ├── api.py              # Route definitions & Logic 
+|  ├── database.py         # Database connection helper
+|  ├── algorithms.py       # Manual algorithm implementations (Bubble Sort, etc.)
+|  ├── init_db.py          # Database initialization script
+|  └── requirements.txt    # Python dependencies  
+├──database/
+|  ├── schema.sql
+|                  
+├── frontend/
+|  ├── index.html
+|  ├── style.css
+|  ├── app.js                     
