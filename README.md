@@ -95,6 +95,7 @@ Open `http://127.0.0.1:5173`
 ```
 ## Project Stucture
 ```
+```
 NYC_Taxi_trips/
 │
 ├── data_pipeline/                
@@ -144,3 +145,5 @@ NYC_Taxi_trips/
 |  ├── index.html
 |  ├── style.css
 |  ├── app.js                     
+
+```
