@@ -46,6 +46,7 @@ const AppState = {
     zoneLayerKey: null,
     dashboardCache: {},
     dashboardController: null,
+    summaryController: null,
     filterDebounceTimer: null
 };
 
@@ -77,20 +78,23 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function initializeApp() {
     try {
         console.log('Fetching trip data from API...');
-        
-        await fetchZonesMetadata();
+
+        // Keep first data render fast; zone metadata can load in background.
+        fetchZonesMetadata().catch((error) => {
+            console.error('Error loading zone metadata in background:', error);
+        });
         await fetchDashboard(1, false, true);
-        
+
         updateDashboard();
-        fetchDashboard(1, true, false).then(() => {
+        fetchSummary().then(() => {
             updateHeroStats();
             updateCharts();
         }).catch((error) => {
-            console.error('Error refreshing summary payload:', error);
+            console.error('Error refreshing summary data:', error);
         });
-        
-        console.log(`✓ Loaded ${AppState.totalTrips.toLocaleString()} total trips`);
-        
+
+        console.log(`Loaded ${AppState.totalTrips.toLocaleString()} total trips`);
+
     } catch (error) {
         console.error('Error initializing app:', error);
         showErrorMessage('Failed to load data. Please check backend connection.');
@@ -106,7 +110,7 @@ function applyDashboardPayload(payload) {
     }
     if (tripsPart) {
         const pagination = tripsPart.pagination || {};
-        AppState.allTrips = tripsPart.data || [];
+        AppState.allTrips = normalizeTrips(tripsPart.data || []);
         AppState.totalTrips = pagination.total || 0;
         AppState.totalPages = pagination.total_pages || 1;
         AppState.currentPage = pagination.page || 1;
@@ -212,7 +216,7 @@ async function fetchTrips(page = 1) {
         
         const data = await response.json();
         
-        AppState.allTrips = data.data || [];
+        AppState.allTrips = normalizeTrips(data.data || []);
         AppState.totalTrips = data.pagination.total;
         AppState.totalPages = data.pagination.total_pages;
         AppState.currentPage = data.pagination.page;
@@ -231,26 +235,35 @@ async function fetchTrips(page = 1) {
 
 async function fetchSummary() {
     try {
+        if (AppState.summaryController) {
+            AppState.summaryController.abort();
+        }
+        const controller = new AbortController();
+        AppState.summaryController = controller;
+
         const params = new URLSearchParams();
-        
-        // Add date filters if set
-        if (AppState.filters.start_date) {
-            params.append('start_date', AppState.filters.start_date);
+        appendTripFilters(params);
+
+        const response = await fetch(`${API_BASE}/api/summary?${params.toString()}`, {
+            signal: controller.signal
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
-        if (AppState.filters.end_date) {
-            params.append('end_date', AppState.filters.end_date);
-        }
-        
-        const response = await fetch(`${API_BASE}/api/summary?${params.toString()}`);
         const data = await response.json();
-        
+
         AppState.summary = data;
-        console.log('✓ Summary data loaded');
-        
+        console.log('Summary data loaded');
+
         return data;
     } catch (error) {
+        if (error && error.name === 'AbortError') {
+            return null;
+        }
         console.error('Error fetching summary:', error);
         return null;
+    } finally {
+        AppState.summaryController = null;
     }
 }
 
@@ -505,11 +518,11 @@ async function handleFilterChange() {
         await fetchDashboard(1, false, true);
         updateDashboard();
         updateZoneLayer();
-        fetchDashboard(1, true, false).then(() => {
+        fetchSummary().then(() => {
             updateHeroStats();
             updateCharts();
         }).catch((error) => {
-            console.error('Error refreshing summary payload:', error);
+            console.error('Error refreshing summary data:', error);
         });
     }, 180);
 }
@@ -693,7 +706,12 @@ async function goToPage(page) {
     if (!Number.isInteger(nextPage) || nextPage < 1) return;
 
     AppState.currentPage = nextPage;
-    await fetchTrips(nextPage);
+    // Keep pagination on the same payload path used by initial load/filters.
+    // Fallback to /api/trips if dashboard request was aborted.
+    const payload = await fetchDashboard(nextPage, false, true);
+    if (payload === null) {
+        await fetchTrips(nextPage);
+    }
     updateDashboard();
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -710,6 +728,8 @@ function showTripDetails(tripId) {
     if (!modalBody) return;
     
     const durationMinutes = Math.round(trip.trip_duration_sec / 60);
+    const totalAmount = getTripTotalAmount(trip);
+    const tripEfficiency = getTripEfficiency(trip);
     
     modalBody.innerHTML = `
         <div class="detail-row">
@@ -750,27 +770,27 @@ function showTripDetails(tripId) {
         </div>
         <div class="detail-row">
             <span class="detail-label">Average Speed:</span>
-            <span class="detail-value">${trip.avg_speed_kmh?.toFixed(1)} km/h</span>
+            <span class="detail-value">${formatNumber(trip.avg_speed_kmh, 1, ' km/h')}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Fare Amount:</span>
-            <span class="detail-value">$${trip.fare_amount?.toFixed(2)}</span>
+            <span class="detail-value">${formatCurrency(trip.fare_amount)}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Tip Amount:</span>
-            <span class="detail-value">$${trip.tip_amount?.toFixed(2)}</span>
+            <span class="detail-value">${formatCurrency(trip.tip_amount)}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Total Amount:</span>
-            <span class="detail-value">$${trip.total_amount?.toFixed(2)}</span>
+            <span class="detail-value">${formatCurrency(totalAmount)}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Fare per KM:</span>
-            <span class="detail-value">$${trip.fare_per_km?.toFixed(2)}</span>
+            <span class="detail-value">${formatCurrency(trip.fare_per_km)}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Trip Efficiency:</span>
-            <span class="detail-value">${trip.trip_efficiency?.toFixed(2)}%</span>
+            <span class="detail-value">${formatNumber(tripEfficiency, 2, '%')}</span>
         </div>
         <div class="detail-row">
             <span class="detail-label">Passengers:</span>
@@ -1125,7 +1145,7 @@ function exportToCSV() {
         Math.round(trip.trip_duration_sec / 60),
         trip.fare_amount,
         trip.tip_amount,
-        trip.total_amount,
+        getTripTotalAmount(trip),
         trip.passenger_count,
         trip.payment_type_name || ''
     ]);
@@ -1150,5 +1170,67 @@ function exportToCSV() {
 
 function showErrorMessage(message) {
     alert(message);
+}
+
+function toFiniteNumber(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+}
+
+function normalizeTrip(trip) {
+    const normalized = { ...trip };
+    const totalAmount = getTripTotalAmount(normalized);
+    const tripEfficiency = getTripEfficiency(normalized);
+
+    if (totalAmount !== null) {
+        normalized.total_amount = totalAmount;
+    }
+    if (tripEfficiency !== null) {
+        normalized.trip_efficiency = tripEfficiency;
+    }
+
+    return normalized;
+}
+
+function normalizeTrips(trips) {
+    const normalized = [];
+    let index = 0;
+    while (index < trips.length) {
+        normalized.push(normalizeTrip(trips[index]));
+        index += 1;
+    }
+    return normalized;
+}
+
+function formatNumber(value, decimals, suffix = '', fallback = 'N/A') {
+    const num = toFiniteNumber(value);
+    if (num === null) return fallback;
+    return `${num.toFixed(decimals)}${suffix}`;
+}
+
+function formatCurrency(value, fallback = 'N/A') {
+    const num = toFiniteNumber(value);
+    if (num === null) return fallback;
+    return `$${num.toFixed(2)}`;
+}
+
+function getTripTotalAmount(trip) {
+    const direct = toFiniteNumber(trip.total_amount);
+    if (direct !== null) return direct;
+
+    const fare = toFiniteNumber(trip.fare_amount);
+    const tip = toFiniteNumber(trip.tip_amount);
+    if (fare === null && tip === null) return null;
+    return (fare || 0) + (tip || 0);
+}
+
+function getTripEfficiency(trip) {
+    const direct = toFiniteNumber(trip.trip_efficiency);
+    if (direct !== null) return direct;
+
+    const haversine = toFiniteNumber(trip.haversine_distance_km ?? trip.haversine_km);
+    const distance = toFiniteNumber(trip.trip_distance_km);
+    if (haversine === null || distance === null || distance === 0) return null;
+    return haversine / distance;
 }
 console.log('NYC Urban Mobility Explorer - Ready!');
