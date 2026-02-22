@@ -189,3 +189,6 @@ NYC_Taxi_trips/
 - `backend/init_db.py` currently loads only `cleaned_data/cleaned_trips.csv` into DB.
 - Zone CSV/GeoJSON are consumed by frontend from backend static route, not from DB.
 - If you change data files, restart backend to refresh in-memory cache behavior.
+- Read the guidelines from `docs` directory to fully understand the concept.
+- In **docs** directory under **pipeline/** you will find more files one contains steps to get cleaned_data and start on going anoter explains how **data_pipeline/** works or runs.
+- In **docs** ypu will see also **Backend/** it also contains a file that explains backend concept
