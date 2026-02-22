@@ -7,6 +7,7 @@ Enterprise-style fullstack analytics project for NYC taxi mobility patterns usin
 
 - **Architecture diagram**: https://drive.google.com/file/d/1paM_y9yGavcYh1p_ihe1HPoM7qEZtic9/view?usp=sharing
 
+- **Video link**: (https://youtu.be/SKfzu4fyNYc)
 ## What This Project Does
 - Cleans and engineers trip-level mobility features from NYC taxi data.
 - Loads cleaned trips into a normalized SQLite schema with indexes.
