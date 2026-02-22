@@ -84,17 +84,11 @@ async function initializeApp() {
         fetchZonesMetadata().catch((error) => {
             console.error('Error loading zone metadata in background:', error);
         });
-        const summaryPromise = fetchSummary();
-        await fetchDashboard(1, false, true);
-        updateTable();
-        updateMap();
-
-        summaryPromise.then(() => {
-            updateHeroStats();
-            updateCharts();
-        }).catch((error) => {
-            console.error('Error refreshing summary data:', error);
-        });
+        const payload = await fetchDashboard(1, true, true);
+        if (!payload) {
+            throw new Error('No dashboard payload returned');
+        }
+        updateDashboard();
 
         console.log(`Loaded ${AppState.totalTrips.toLocaleString()} total trips`);
 
@@ -547,17 +541,10 @@ async function handleFilterChange() {
         clearTimeout(AppState.filterDebounceTimer);
     }
     AppState.filterDebounceTimer = setTimeout(async () => {
-        const summaryPromise = fetchSummary();
-        await fetchDashboard(1, false, true);
-        updateTable();
-        updateMap();
+        const payload = await fetchDashboard(1, true, true);
+        if (!payload) return;
+        updateDashboard();
         updateZoneLayer();
-        summaryPromise.then(() => {
-            updateHeroStats();
-            updateCharts();
-        }).catch((error) => {
-            console.error('Error refreshing summary data:', error);
-        });
     }, 180);
 }
 
