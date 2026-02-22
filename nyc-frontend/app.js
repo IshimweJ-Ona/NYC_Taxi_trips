@@ -453,10 +453,12 @@ function setupEventListeners() {
     document.getElementById('next-page')?.addEventListener('click', () => changePage(1));
     
     // Custom sort toggle
-    document.getElementById('custom-sort-toggle')?.addEventListener('change', (e) => {
-        AppState.useCustomSort = e.target.checked;
+    document.getElementById('custom-sort-btn')?.addEventListener('click', () => {
+        AppState.useCustomSort = !AppState.useCustomSort;
+        updateCustomSortButton();
         handleFilterChange();
     });
+    updateCustomSortButton();
     
     // Modal close
     const modal = document.getElementById('trip-modal');
@@ -539,7 +541,8 @@ function resetFilters() {
     if (document.getElementById('pickup-zone-filter')) document.getElementById('pickup-zone-filter').value = 'all';
     if (document.getElementById('dropoff-borough-filter')) document.getElementById('dropoff-borough-filter').value = 'all';
     if (document.getElementById('dropoff-zone-filter')) document.getElementById('dropoff-zone-filter').value = 'all';
-    if (document.getElementById('custom-sort-toggle')) document.getElementById('custom-sort-toggle').checked = false;
+    AppState.useCustomSort = false;
+    updateCustomSortButton();
     
     // Reset state
     AppState.filters = {
@@ -558,7 +561,6 @@ function resetFilters() {
         dropoff_borough: null,
         dropoff_zone: null
     };
-    AppState.useCustomSort = false;
     AppState.currentPage = 1;
     
     // Reload data
@@ -1170,6 +1172,14 @@ function exportToCSV() {
 
 function showErrorMessage(message) {
     alert(message);
+}
+
+function updateCustomSortButton() {
+    const btn = document.getElementById('custom-sort-btn');
+    if (!btn) return;
+
+    btn.classList.toggle('active', AppState.useCustomSort);
+    btn.setAttribute('aria-pressed', AppState.useCustomSort ? 'true' : 'false');
 }
 
 function toFiniteNumber(value) {
