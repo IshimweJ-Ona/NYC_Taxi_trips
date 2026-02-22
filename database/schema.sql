@@ -64,9 +64,7 @@ CREATE TABLE trips (
     payment_type_id INTEGER,
     passenger_count INTEGER CHECK (passenger_count >= 0),
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (payment_type_id) REFERENCES payment_types (payment_type_id),
-    FOREIGN KEY (pu_location_id) REFERENCES zones (location_id),
-    FOREIGN KEY (do_location_id) REFERENCES zones (location_id)
+    FOREIGN KEY (payment_type_id) REFERENCES payment_types (payment_type_id)
 );
 
 CREATE INDEX idx_trips_pickup_time ON trips (pickup_datetime);
