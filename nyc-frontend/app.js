@@ -1,12 +1,6 @@
 // API Configuration
 function resolveApiBase() {
-    const fallback = 'http://localhost:5000';
-    const host = window.location.hostname;
-    if (!host) {
-        return fallback;
-    }
-    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-    return `${protocol}//${host}:5000`;
+    return 'http://127.0.0.1:5000';
 }
 
 let API_BASE = resolveApiBase();
@@ -18,26 +12,13 @@ function buildApiCandidates() {
     const candidates = [];
     const seen = new Set();
 
-    const override = (
-        window.localStorage?.getItem('NYC_TAXI_API_BASE')
-        || window.NYC_TAXI_API_BASE
-        || ''
-    ).trim();
-    if (override) {
-        candidates.push(override.replace(/\/+$/, ''));
-    }
-
-    if (window.location.origin && window.location.origin !== 'null') {
-        candidates.push(window.location.origin.replace(/\/+$/, ''));
-    }
-
     const resolved = resolveApiBase();
     if (resolved) {
         candidates.push(resolved.replace(/\/+$/, ''));
     }
 
-    candidates.push('http://localhost:5000');
     candidates.push('http://127.0.0.1:5000');
+    candidates.push('http://localhost:5000');
 
     const deduped = [];
     let index = 0;
@@ -116,7 +97,7 @@ async function ensureApiBase() {
         index += 1;
     }
     // Keep deterministic fallback if health check probes fail.
-    setApiBase(resolveApiBase());
+    setApiBase('http://127.0.0.1:5000');
 }
 
 // Global State Management
