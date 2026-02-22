@@ -1,5 +1,15 @@
 // API Configuration
-const API_BASE = 'http://localhost:5000';
+function resolveApiBase() {
+    const fallback = 'http://localhost:5000';
+    const host = window.location.hostname;
+    if (!host) {
+        return fallback;
+    }
+    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+    return `${protocol}//${host}:5000`;
+}
+
+const API_BASE = resolveApiBase();
 const CLEANED_DATA_BASE = `${API_BASE}/cleaned_data`;
 const ZONES_CSV_PATH = `${CLEANED_DATA_BASE}/zones_cleaned.csv`;
 const ZONES_GEOJSON_PATH = `${CLEANED_DATA_BASE}/zones_geo_cleaned.geojson`;
