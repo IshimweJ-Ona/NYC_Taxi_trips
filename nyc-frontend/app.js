@@ -9,10 +9,115 @@ function resolveApiBase() {
     return `${protocol}//${host}:5000`;
 }
 
-const API_BASE = resolveApiBase();
-const CLEANED_DATA_BASE = `${API_BASE}/cleaned_data`;
-const ZONES_CSV_PATH = `${CLEANED_DATA_BASE}/zones_cleaned.csv`;
-const ZONES_GEOJSON_PATH = `${CLEANED_DATA_BASE}/zones_geo_cleaned.geojson`;
+let API_BASE = resolveApiBase();
+let CLEANED_DATA_BASE = `${API_BASE}/cleaned_data`;
+let ZONES_CSV_PATH = `${CLEANED_DATA_BASE}/zones_cleaned.csv`;
+let ZONES_GEOJSON_PATH = `${CLEANED_DATA_BASE}/zones_geo_cleaned.geojson`;
+
+function buildApiCandidates() {
+    const candidates = [];
+    const seen = new Set();
+
+    const override = (
+        window.localStorage?.getItem('NYC_TAXI_API_BASE')
+        || window.NYC_TAXI_API_BASE
+        || ''
+    ).trim();
+    if (override) {
+        candidates.push(override.replace(/\/+$/, ''));
+    }
+
+    if (window.location.origin && window.location.origin !== 'null') {
+        candidates.push(window.location.origin.replace(/\/+$/, ''));
+    }
+
+    const resolved = resolveApiBase();
+    if (resolved) {
+        candidates.push(resolved.replace(/\/+$/, ''));
+    }
+
+    candidates.push('http://localhost:5000');
+    candidates.push('http://127.0.0.1:5000');
+
+    const deduped = [];
+    let index = 0;
+    while (index < candidates.length) {
+        const value = candidates[index];
+        if (!seen.has(value)) {
+            seen.add(value);
+            deduped.push(value);
+        }
+        index += 1;
+    }
+    return deduped;
+}
+
+function setApiBase(baseUrl) {
+    API_BASE = baseUrl.replace(/\/+$/, '');
+    CLEANED_DATA_BASE = `${API_BASE}/cleaned_data`;
+    ZONES_CSV_PATH = `${CLEANED_DATA_BASE}/zones_cleaned.csv`;
+    ZONES_GEOJSON_PATH = `${CLEANED_DATA_BASE}/zones_geo_cleaned.geojson`;
+}
+
+async function canReachApi(baseUrl) {
+    const probes = [
+        `${baseUrl}/api/dashboard?page=1&per_page=1&include_summary=false&include_trips=false`,
+        `${baseUrl}/api/trips?page=1&per_page=1`,
+        `${baseUrl}/health`
+    ];
+
+    let index = 0;
+    while (index < probes.length) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        try {
+            const response = await fetch(probes[index], {
+                signal: controller.signal
+            });
+            if (response.ok) {
+                return true;
+            }
+        } catch (error) {
+            // Try the next probe.
+        } finally {
+            clearTimeout(timer);
+        }
+        index += 1;
+    }
+    return false;
+}
+
+async function loadInitialData() {
+    try {
+        const payload = await fetchDashboard(1, true, true);
+        if (payload) {
+            return true;
+        }
+    } catch (error) {
+        console.error('Dashboard bootstrap failed, using legacy endpoints:', error);
+    }
+
+    // Compatibility fallback for backends that expose /api/trips + /api/summary but not /api/dashboard.
+    const summaryResult = await fetchSummary();
+    const tripsResult = await fetchTrips(1);
+    return Boolean(tripsResult || summaryResult);
+}
+
+async function ensureApiBase() {
+    const candidates = buildApiCandidates();
+    let index = 0;
+    while (index < candidates.length) {
+        const candidate = candidates[index];
+        const reachable = await canReachApi(candidate);
+        if (reachable) {
+            setApiBase(candidate);
+            return;
+        }
+        index += 1;
+    }
+    // Keep deterministic fallback if health check probes fail.
+    setApiBase(resolveApiBase());
+}
 
 // Global State Management
 const AppState = {
@@ -88,15 +193,17 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function initializeApp() {
     try {
+        await ensureApiBase();
+        console.log(`Using API base: ${API_BASE}`);
         console.log('Fetching trip data from API...');
 
         // Keep first data render fast; zone metadata can load in background.
         fetchZonesMetadata().catch((error) => {
             console.error('Error loading zone metadata in background:', error);
         });
-        const payload = await fetchDashboard(1, true, true);
-        if (!payload) {
-            throw new Error('No dashboard payload returned');
+        const loaded = await loadInitialData();
+        if (!loaded) {
+            throw new Error('Unable to load initial dashboard data');
         }
         updateDashboard();
 
