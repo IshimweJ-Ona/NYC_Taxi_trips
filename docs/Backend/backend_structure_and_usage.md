@@ -1,80 +1,115 @@
-# Backend Guide
+# Backend Structure and Usage
 
-This document explains the architecture, structure, and usage of the project's **Backend** system, which processes data requests from the frontend and serves the NYC Taxi trip insights.
+This document reflects the current backend implementation after the performance and data-flow updates.
 
-## Overview
-The backend is built with **Python** using the **Flask** framework. It acts as the bridge between the processed data (stored in SQLite) and the client-side user interface. It handles API requests, executes efficient SQL queries, and implements required manual algorithms.
+## Backend Responsibilities
+- Serve API endpoints for trips, summaries, temporal analytics, routes, and map data.
+- Serve static zone files (`zones_cleaned.csv`, `zones_geo_cleaned.geojson`) from `cleaned_data/`.
+- Query SQLite (`database/nyc_taxi.db`) using filterable SQL.
+- Apply manual sorting algorithm when requested.
+- Cache API responses in memory to reduce repeated query cost.
 
-## Infrastructure Structure
-
-```
+## Current Backend Layout
+```text
 backend/
-├── app.py              # Main entry point (Server & Config)
-├── api.py              # Route definitions & Logic 
-├── database.py         # Database connection helper
-├── algorithms.py       # Manual algorithm implementations (Bubble Sort, etc.)
-├── init_db.py          # Database initialization script
-└── requirements.txt    # Python dependencies
+├── app.py
+├── api.py
+├── algorithms.py
+├── database.py
+├── init_db.py
+├── clean_data.py
+├── clean_transform.py
+└── requirements.txt
 ```
 
-## Key Components
+## File Roles
 
-### 1. API Server (`app.py` & `api.py`)
-- **Framework**: Flask is used for its lightweight nature.
-- **Blueprints**: The `api.py` file defines a discrete "Blueprint" for all API routes, keeping `app.py` clean.
-- **RESTful Endpoints**:
-    - `GET /api/trips`: Returns paginated trip data. Supports filtering by date, distance, fare, etc.
-    - `GET /api/summary`: Aggregates statistics (Total trips, Avg Fare, etc.) based on active filters.
-    - `GET /api/heatmap`: Provides geolocation data for visualization.
-- **Swagger Documentation**: Integrated with `Flasgger` to provide interactive API docs at `/apidocs`.
+### `backend/app.py`
+- Creates Flask app.
+- Enables CORS.
+- Registers API blueprint from `api.py`.
+- Exposes static cleaned-data files through:
+  - `/cleaned_data/zones_cleaned.csv`
+  - `/cleaned_data/zones_geo_cleaned.geojson`
+- Health endpoint: `/health`.
 
-### 2. Database (`database/nyc_taxi.db`)
-- **Technology**: SQLite (perfect for this scale of embedded analytics).
-- **Schema**: Defined in `database/schema.sql`.
-- **Optimization**: The `init_db.py` script creates indexes on high-traffic columns (e.g., `pickup_datetime`, `fare_amount`) to ensure sub-second query performance.
+### `backend/api.py`
+- Implements all REST endpoints.
+- Centralized query helpers:
+  - `build_where_clause(...)`
+  - `query_trips_payload(...)`
+  - `query_summary_payload(...)`
+- Implements in-memory TTL response cache:
+  - `_cache_key`, `_cache_get`, `_cache_set`.
+- Implements performance-split dashboard endpoint:
+  - `GET /api/dashboard`
+  - `include_summary=true|false`
+  - `include_trips=true|false`.
 
-### 3. Custom Algorithms (`algorithms.py`)
-To meet specific assignment requirements, we implemented manual versions of standard algorithms:
-- **Bubble Sort**: Manually sorts trips by fare amount when the user checks "Use Custom Algo".
-- **Distance Filter**: A manual range filtering implementation.
-These demonstrate algorithmic understanding without relying solely on Python's built-in `sort()` or SQL's `ORDER BY`.
+### `backend/algorithms.py`
+- Manual iterative merge sort:
+  - `manual_merge_sort_trips(...)`
+- Compatibility wrapper:
+  - `manual_bubble_sort_trips_by_fare(...)` delegates to merge sort.
+- Manual range filter:
+  - `manual_filter_trips_by_distance(...)`.
 
-## How It Works
+### `backend/init_db.py`
+- Creates schema from `database/schema.sql`.
+- Loads trips from `cleaned_data/cleaned_trips.csv`.
+- Adds additional runtime indexes.
+- Runs `VACUUM` after load.
 
-1. **Initialization**:
-   - `init_db.py` reads the processed CSV (`data/processed/cleaned_trips.csv`) and bulk-loads it into the SQLite database.
-   
-2. **Request Flow**:
-   - **Frontend** calls `GET /api/trips?page=1&min_distance=5`.
-   - **Backend** (`api.py`) parses these parameters.
-   - SQL Query is dynamically built to filter results efficiently.
-   - If "Custom Sort" is requested, the backend fetches *all* matching records and sorts them in-memory using `algorithms.py`.
-   - Data is returned as JSON.
+## Database Notes
+- Database engine: SQLite.
+- Main fact table: `trips`.
+- Dimension table still present: `payment_types`.
+- Zone tables exist in schema (`zones`, `zones_geo`) but current frontend flow reads zone metadata from cleaned-data static files.
 
-## Setup Instructions
+## Endpoint Reference (Operational)
 
-1. **Environment**:
- Ensure your virtual environment is active:
- ```bash
- source venv/bin/activate  # Linux/Mac
- # or
- .\venv\Scripts\activate   # Windows
- ```
+### Core
+- `GET /api/dashboard`
+  - Returns:
+    - `summary` (optional)
+    - `trips` (optional)
+  - Key params:
+    - `page`, `per_page`, `sort`, `order`
+    - `include_summary`, `include_trips`
+    - `custom_sort`
+    - filter params from `build_where_clause`.
 
-2. **Dependencies**:
- ```bash
- pip install -r backend/requirements.txt
- ```
+### Additional
+- `GET /api/trips`
+- `GET /api/summary`
+- `GET /api/heatmap`
+- `GET /api/top_routes`
+- `GET /api/temporal_analysis`
+- `GET /api/zones`
+- `GET /api/zones/boroughs`
+- `GET /api/zones/geojson`
 
-3. **Initialize Database**:
- ```bash
- python backend/init_db.py
- ```
- *This creates the `nyc_taxi.db` file and populates it with your processed data.*
+## Data Filtering Strategy (Current)
+- Frontend converts borough/zone selections to location ID filters.
+- Backend currently relies on:
+  - `pu_location_id`, `do_location_id`
+  - `pu_location_ids`, `do_location_ids`
+- Core trips/summary queries do not require zone-table joins.
 
-4. **Running the Server**:
- ```bash
- python backend/app.py
- ```
- The API will be available at `http://127.0.0.1:5000`.
- - Interactive Docs: `http://127.0.0.1:5000/apidocs`
+## Performance Strategy (Current)
+- Server-side response caching (TTL).
+- Dashboard split payload to avoid expensive summary blocking trips/map.
+- Summary caching keyed by filter signature.
+- Optional manual merge-sort path for assignment algorithm requirement.
+
+## Run Backend
+From project root:
+```bash
+python backend/init_db.py
+python backend/app.py
+```
+
+Verify:
+- `http://localhost:5000/health`
+- `http://localhost:5000/apidocs`
+- `http://localhost:5000/api/dashboard?page=1&per_page=100&sort=pickup_datetime&order=desc&include_summary=false&include_trips=true`
