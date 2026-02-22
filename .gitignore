@@ -13,7 +13,7 @@ data/cleaned/
 data/processed/
 data/taxi_zones/
 data/logs/
-database/
+database/nyc_taxi.db
 data/
 *.csv
 *.parquet
