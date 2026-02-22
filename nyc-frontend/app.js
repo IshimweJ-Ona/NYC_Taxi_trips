@@ -45,6 +45,7 @@ const AppState = {
     zoneLayerVisible: false,
     zoneLayerKey: null,
     dashboardCache: {},
+    summaryCache: {},
     dashboardController: null,
     summaryController: null,
     filterDebounceTimer: null
@@ -83,10 +84,12 @@ async function initializeApp() {
         fetchZonesMetadata().catch((error) => {
             console.error('Error loading zone metadata in background:', error);
         });
+        const summaryPromise = fetchSummary();
         await fetchDashboard(1, false, true);
+        updateTable();
+        updateMap();
 
-        updateDashboard();
-        fetchSummary().then(() => {
+        summaryPromise.then(() => {
             updateHeroStats();
             updateCharts();
         }).catch((error) => {
@@ -235,14 +238,21 @@ async function fetchTrips(page = 1) {
 
 async function fetchSummary() {
     try {
+        const params = new URLSearchParams();
+        appendTripFilters(params);
+        const cacheKey = params.toString();
+        const now = Date.now();
+        const cacheEntry = AppState.summaryCache[cacheKey];
+        if (cacheEntry && (now - cacheEntry.ts) < 15000) {
+            AppState.summary = cacheEntry.payload;
+            return cacheEntry.payload;
+        }
+
         if (AppState.summaryController) {
             AppState.summaryController.abort();
         }
         const controller = new AbortController();
         AppState.summaryController = controller;
-
-        const params = new URLSearchParams();
-        appendTripFilters(params);
 
         const response = await fetch(`${API_BASE}/api/summary?${params.toString()}`, {
             signal: controller.signal
@@ -253,6 +263,26 @@ async function fetchSummary() {
         const data = await response.json();
 
         AppState.summary = data;
+        AppState.summaryCache[cacheKey] = {
+            ts: now,
+            payload: data
+        };
+        const cacheKeys = Object.keys(AppState.summaryCache);
+        if (cacheKeys.length > 100) {
+            let oldestKey = cacheKeys[0];
+            let oldestTs = AppState.summaryCache[oldestKey].ts;
+            let index = 1;
+            while (index < cacheKeys.length) {
+                const key = cacheKeys[index];
+                const ts = AppState.summaryCache[key].ts;
+                if (ts < oldestTs) {
+                    oldestTs = ts;
+                    oldestKey = key;
+                }
+                index += 1;
+            }
+            delete AppState.summaryCache[oldestKey];
+        }
         console.log('Summary data loaded');
 
         return data;
@@ -517,10 +547,12 @@ async function handleFilterChange() {
         clearTimeout(AppState.filterDebounceTimer);
     }
     AppState.filterDebounceTimer = setTimeout(async () => {
+        const summaryPromise = fetchSummary();
         await fetchDashboard(1, false, true);
-        updateDashboard();
+        updateTable();
+        updateMap();
         updateZoneLayer();
-        fetchSummary().then(() => {
+        summaryPromise.then(() => {
             updateHeroStats();
             updateCharts();
         }).catch((error) => {
