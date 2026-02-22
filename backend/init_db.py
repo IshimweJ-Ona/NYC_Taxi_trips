@@ -313,18 +313,12 @@ def init_database():
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         db_path = os.path.join(base_dir, 'database', 'nyc_taxi.db')
         schema_path = os.path.join(base_dir, 'database', 'schema.sql')
-        cleaned_data_path = os.path.join(base_dir, 'data', 'processed', 'cleaned_trips.csv')
-        zones_path = os.path.join(base_dir, 'data', 'processed', 'zones_cleaned.csv')
-        zones_geo_path = os.path.join(base_dir, 'data', 'processed', 'zones_geo_cleaned.geojson')
+        cleaned_data_path = os.path.join(base_dir, 'cleaned_data', 'cleaned_trips.csv')
         
         with DatabaseManager(db_path) as db:
             logging.info("Creating database schema...")
             if not db.execute_script_file(schema_path):
                 raise Exception("Failed to create database schema")
-            
-            logging.info("Loading zones...")
-            db.load_zones(zones_path)
-            db.load_zones_geo(zones_geo_path)
             
             logging.info("Loading cleaned data...")
             if not db.load_cleaned_data(cleaned_data_path):

@@ -2,12 +2,55 @@
 import os
 import sqlite3
 import json
+import time
+from threading import Lock
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request, current_app
 from functools import wraps
-from algorithms import manual_bubble_sort_trips_by_fare, manual_filter_trips_by_distance
+from algorithms import manual_merge_sort_trips
 
 api = Blueprint('api', __name__)
+_CACHE_LOCK = Lock()
+_RESPONSE_CACHE = {}
+
+
+def _cache_key(prefix):
+    pairs = []
+    for key in request.args.keys():
+        values = request.args.getlist(key)
+        idx = 0
+        while idx < len(values):
+            pairs.append((key, values[idx]))
+            idx += 1
+    pairs.sort(key=lambda item: (item[0], item[1]))
+    return f"{prefix}:{json.dumps(pairs, separators=(',', ':'))}"
+
+
+def _cache_get(key):
+    now = time.time()
+    with _CACHE_LOCK:
+        record = _RESPONSE_CACHE.get(key)
+        if not record:
+            return None
+        expires_at, payload = record
+        if expires_at <= now:
+            _RESPONSE_CACHE.pop(key, None)
+            return None
+        return payload
+
+
+def _cache_set(key, payload, ttl_seconds):
+    expires_at = time.time() + ttl_seconds
+    with _CACHE_LOCK:
+        _RESPONSE_CACHE[key] = (expires_at, payload)
+
+
+def _filters_cache_key(prefix, filters):
+    items = []
+    for key in filters:
+        items.append((key, str(filters[key])))
+    items.sort(key=lambda item: (item[0], item[1]))
+    return f"{prefix}:{json.dumps(items, separators=(',', ':'))}"
 
 def get_db_connection():
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -37,6 +80,11 @@ def parse_date(date_str, default=None):
         return datetime.strptime(date_str, '%Y-%m-%d')
     except ValueError:
         return default
+
+def build_join_clause(filters):
+    # Core analytics/trips endpoints do not require zone joins.
+    _ = filters
+    return ""
 
 def build_where_clause(filters):
     conditions = []
@@ -99,24 +147,157 @@ def build_where_clause(filters):
         conditions.append("t.do_location_id = :do_location_id")
         params['do_location_id'] = int(filters['do_location_id'])
 
-    if 'pickup_borough' in filters:
-        conditions.append("zpu.borough = :pickup_borough")
-        params['pickup_borough'] = filters['pickup_borough']
+    if 'pu_location_ids' in filters:
+        raw_ids = str(filters['pu_location_ids'])
+        pieces = raw_ids.split(',')
+        in_params = []
+        index = 0
+        while index < len(pieces):
+            cleaned = pieces[index].strip()
+            if cleaned:
+                param_key = f"pu_location_id_{index}"
+                params[param_key] = int(cleaned)
+                in_params.append(f":{param_key}")
+            index += 1
+        if in_params:
+            conditions.append(f"t.pu_location_id IN ({', '.join(in_params)})")
 
-    if 'dropoff_borough' in filters:
-        conditions.append("zdo.borough = :dropoff_borough")
-        params['dropoff_borough'] = filters['dropoff_borough']
+    if 'do_location_ids' in filters:
+        raw_ids = str(filters['do_location_ids'])
+        pieces = raw_ids.split(',')
+        in_params = []
+        index = 0
+        while index < len(pieces):
+            cleaned = pieces[index].strip()
+            if cleaned:
+                param_key = f"do_location_id_{index}"
+                params[param_key] = int(cleaned)
+                in_params.append(f":{param_key}")
+            index += 1
+        if in_params:
+            conditions.append(f"t.do_location_id IN ({', '.join(in_params)})")
 
-    if 'pickup_zone' in filters:
-        conditions.append("zpu.zone = :pickup_zone")
-        params['pickup_zone'] = filters['pickup_zone']
-
-    if 'dropoff_zone' in filters:
-        conditions.append("zdo.zone = :dropoff_zone")
-        params['dropoff_zone'] = filters['dropoff_zone']
+    # Zone/borough filters are resolved in the frontend into location-id filters.
     
     where_clause = " AND ".join(conditions) if conditions else "1=1"
     return where_clause, params
+
+
+def query_summary_payload(filters):
+    where_clause, params = build_where_clause(filters)
+
+    with get_db_connection() as conn:
+        query = f"""
+            SELECT
+                COUNT(*) as total_trips,
+                COALESCE(AVG(trip_distance_km), 0) as avg_distance_km,
+                COALESCE(AVG(fare_amount), 0) as avg_fare,
+                COALESCE(AVG(tip_amount), 0) as avg_tip,
+                COALESCE(AVG(tip_amount / NULLIF(fare_amount, 0)) * 100, 0) as avg_tip_percentage,
+                COALESCE(AVG(avg_speed_kmh), 0) as avg_speed_kmh,
+                COALESCE(AVG(fare_per_km), 0) as avg_fare_per_km,
+                COALESCE(AVG(trip_efficiency), 0) as avg_efficiency,
+                SUM(CASE WHEN is_peak_hour = 1 THEN 1 ELSE 0 END) as peak_hour_trips,
+                SUM(CASE WHEN is_weekend = 1 THEN 1 ELSE 0 END) as weekend_trips
+            FROM trips t
+            WHERE {where_clause}
+        """
+        result = conn.execute(query, params).fetchone()
+
+        payment_query = f"""
+            SELECT p.payment_type_name, COUNT(*) as count
+            FROM trips t
+            JOIN payment_types p ON t.payment_type_id = p.payment_type_id
+            WHERE {where_clause}
+            GROUP BY p.payment_type_name
+            ORDER BY count DESC
+        """
+        payment_dist = [dict(row) for row in conn.execute(payment_query, params)]
+
+        hourly_query = f"""
+            SELECT
+                pickup_hour,
+                COUNT(*) as trip_count,
+                COALESCE(AVG(fare_amount), 0) as avg_fare,
+                COALESCE(AVG(tip_amount), 0) as avg_tip
+            FROM trips t
+            WHERE {where_clause}
+            GROUP BY pickup_hour
+            ORDER BY pickup_hour
+        """
+        hourly_data = [dict(row) for row in conn.execute(hourly_query, params)]
+
+    summary = dict(result)
+    # Friendly aliases for clients.
+    summary["avg_distance"] = summary.get("avg_distance_km", 0)
+    summary["avg_speed"] = summary.get("avg_speed_kmh", 0)
+    summary["payment_distribution"] = payment_dist
+    summary["hourly_distribution"] = hourly_data
+    return summary
+
+
+def query_trips_payload(filters, page, per_page, sort, order, use_custom_sort):
+    offset = (page - 1) * per_page
+    where_clause, params = build_where_clause(filters)
+    join_clause = build_join_clause(filters)
+    params.update({'limit': per_page, 'offset': offset})
+
+    sort_map = {
+        'pickup_datetime': 't.pickup_datetime',
+        'dropoff_datetime': 't.dropoff_datetime',
+        'trip_distance_km': 't.trip_distance_km',
+        'fare_amount': 't.fare_amount',
+        'tip_amount': 't.tip_amount',
+        'avg_speed_kmh': 't.avg_speed_kmh'
+    }
+    sort_column = sort_map.get(sort, 't.pickup_datetime')
+    # Keep pagination stable when the primary sort column has duplicate values.
+    order_by = f"{sort_column} {order.upper()}, t.id {order.upper()}"
+
+    with get_db_connection() as conn:
+        count_query = f"""
+            SELECT COUNT(*) as total
+            FROM trips t
+            {join_clause}
+            WHERE {where_clause}
+        """
+        total = conn.execute(count_query, params).fetchone()['total']
+
+        if use_custom_sort:
+            query = f"""
+                SELECT t.*, p.payment_type_name
+                FROM trips t
+                LEFT JOIN payment_types p ON t.payment_type_id = p.payment_type_id
+                WHERE {where_clause}
+            """
+            all_trips = [dict(row) for row in conn.execute(query, params)]
+            sorted_trips = manual_merge_sort_trips(
+                all_trips,
+                sort_field=sort if sort in sort_map else 'pickup_datetime',
+                ascending=(order == 'asc')
+            )
+            trips = sorted_trips[offset:offset + per_page]
+        else:
+            query = f"""
+                SELECT t.*, p.payment_type_name
+                FROM trips t
+                LEFT JOIN payment_types p ON t.payment_type_id = p.payment_type_id
+                WHERE {where_clause}
+                ORDER BY {order_by}
+                LIMIT :limit OFFSET :offset
+            """
+            trips = [dict(row) for row in conn.execute(query, params)]
+
+    return {
+        'data': trips,
+        'pagination': {
+            'total': total,
+            'page': page,
+            'per_page': per_page,
+            'total_pages': (total + per_page - 1) // per_page
+        },
+        'algorithm_used': 'Manual Merge Sort' if use_custom_sort else 'SQL Order By'
+    }
 
 @api.route('/api/trips', methods=['GET'])
 @handle_db_errors
@@ -133,7 +314,7 @@ def get_trips():
       - name: per_page
         in: query
         type: integer
-        default: 50
+        default: 100
         description: Items per page (max 100)
       - name: start_date
         in: query
@@ -174,85 +355,23 @@ def get_trips():
         description: List of trips
     """
     page = int(request.args.get('page', 1))
-    per_page = min(int(request.args.get('per_page', 50)), 100)
-    offset = (page - 1) * per_page
+    per_page = min(int(request.args.get('per_page', 100)), 100)
+
+    cache_key = _cache_key("trips")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
     
-    filters = {k: v for k, v in request.args.items() 
-              if k not in ['page', 'per_page', 'sort', 'order']}
-    
-    where_clause, params = build_where_clause(filters)
-    params.update({'limit': per_page, 'offset': offset})
-    
+    filters = {k: v for k, v in request.args.items()
+              if k not in ['page', 'per_page', 'sort', 'order', 'custom_sort']}
+
     sort = request.args.get('sort', 'pickup_datetime')
-    order = request.args.get('order', 'desc')
-    sort_map = {
-        'pickup_datetime': 't.pickup_datetime',
-        'dropoff_datetime': 't.dropoff_datetime',
-        'trip_distance_km': 't.trip_distance_km',
-        'fare_amount': 't.fare_amount',
-        'tip_amount': 't.tip_amount',
-        'avg_speed_kmh': 't.avg_speed_kmh'
-    }
-    order_by = f"{sort_map.get(sort, 't.pickup_datetime')} {order.upper()}"
-    
+    order = request.args.get('order', 'desc').lower()
+    if order not in ('asc', 'desc'):
+        order = 'desc'
     use_custom_sort = request.args.get('custom_sort', 'false').lower() == 'true'
-    
-    with get_db_connection() as conn:
-        count_query = f"""
-            SELECT COUNT(*) as total 
-            FROM trips t
-            LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-            LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
-            WHERE {where_clause}
-        """
-        total = conn.execute(count_query, params).fetchone()['total']
-        
-        if use_custom_sort:
-            query = f"""
-                SELECT t.*, p.payment_type_name,
-                       zpu.borough as pickup_borough, zpu.zone as pickup_zone,
-                       zdo.borough as dropoff_borough, zdo.zone as dropoff_zone
-                FROM trips t
-                LEFT JOIN payment_types p ON t.payment_type_id = p.payment_type_id
-                LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-                LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
-                WHERE {where_clause}
-            """
-            all_trips = [dict(row) for row in conn.execute(query, params)]
-            
-            print("Applying Manual Bubble Sort...")
-            sorted_trips = manual_bubble_sort_trips_by_fare(all_trips, ascending=False)
-            
-            start = offset
-            end = offset + per_page
-            trips = sorted_trips[start:end]
-            
-        else:
-            query = f"""
-                SELECT t.*, p.payment_type_name,
-                       zpu.borough as pickup_borough, zpu.zone as pickup_zone,
-                       zdo.borough as dropoff_borough, zdo.zone as dropoff_zone
-                FROM trips t
-                LEFT JOIN payment_types p ON t.payment_type_id = p.payment_type_id
-                LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-                LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
-                WHERE {where_clause}
-                ORDER BY {order_by}
-                LIMIT :limit OFFSET :offset
-            """
-            trips = [dict(row) for row in conn.execute(query, params)]
-    
-    response = {
-        'data': trips,
-        'pagination': {
-            'total': total,
-            'page': page,
-            'per_page': per_page,
-            'total_pages': (total + per_page - 1) // per_page
-        },
-        'algorithm_used': 'Manual Bubble Sort' if use_custom_sort else 'SQL Order By'
-    }
-    
+    response = query_trips_payload(filters, page, per_page, sort, order, use_custom_sort)
+    _cache_set(cache_key, response, ttl_seconds=30)
     return jsonify(response)
 
 @api.route('/api/summary', methods=['GET'])
@@ -276,61 +395,55 @@ def get_summary():
       200:
         description: Summary statistics
     """
+    cache_key = _cache_key("summary")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
     filters = dict(request.args)
-    where_clause, params = build_where_clause(filters)
-    
-    with get_db_connection() as conn:
-        query = f"""
-            SELECT 
-                COUNT(*) as total_trips,
-                AVG(trip_distance_km) as avg_distance_km,
-                AVG(fare_amount) as avg_fare,
-                AVG(tip_amount) as avg_tip,
-                AVG(tip_amount / NULLIF(fare_amount, 0)) * 100 as avg_tip_percentage,
-                AVG(avg_speed_kmh) as avg_speed_kmh,
-                AVG(fare_per_km) as avg_fare_per_km,
-                AVG(trip_efficiency) as avg_efficiency,
-                SUM(CASE WHEN is_peak_hour = 1 THEN 1 ELSE 0 END) as peak_hour_trips,
-                SUM(CASE WHEN is_weekend = 1 THEN 1 ELSE 0 END) as weekend_trips
-            FROM trips t
-            LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-            LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
-            WHERE {where_clause}
-        """
-        result = conn.execute(query, params).fetchone()
-        
-        payment_query = f"""
-            SELECT p.payment_type_name, COUNT(*) as count
-            FROM trips t
-            JOIN payment_types p ON t.payment_type_id = p.payment_type_id
-            LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-            LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
-            WHERE {where_clause}
-            GROUP BY p.payment_type_name
-            ORDER BY count DESC
-        """
-        payment_dist = [dict(row) for row in conn.execute(payment_query, params)]
-        
-        hourly_query = f"""
-            SELECT 
-                pickup_hour,
-                COUNT(*) as trip_count,
-                AVG(fare_amount) as avg_fare,
-                AVG(tip_amount) as avg_tip
-            FROM trips t
-            LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-            LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
-            WHERE {where_clause}
-            GROUP BY pickup_hour
-            ORDER BY pickup_hour
-        """
-        hourly_data = [dict(row) for row in conn.execute(hourly_query, params)]
-    
-    summary = dict(result)
-    summary['payment_distribution'] = payment_dist
-    summary['hourly_distribution'] = hourly_data
-    
+    summary = query_summary_payload(filters)
+    _cache_set(cache_key, summary, ttl_seconds=30)
     return jsonify(summary)
+
+
+@api.route('/api/dashboard', methods=['GET'])
+@handle_db_errors
+def get_dashboard():
+    """
+    Get dashboard payload with summary metrics + paginated trip records.
+    """
+    cache_key = _cache_key("dashboard")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
+    page = int(request.args.get('page', 1))
+    per_page = min(int(request.args.get('per_page', 100)), 100)
+    sort = request.args.get('sort', 'pickup_datetime')
+    order = request.args.get('order', 'desc').lower()
+    if order not in ('asc', 'desc'):
+        order = 'desc'
+    use_custom_sort = request.args.get('custom_sort', 'false').lower() == 'true'
+    include_summary = request.args.get('include_summary', 'true').lower() == 'true'
+    include_trips = request.args.get('include_trips', 'true').lower() == 'true'
+    filters = {k: v for k, v in request.args.items()
+              if k not in ['page', 'per_page', 'sort', 'order', 'custom_sort', 'include_summary', 'include_trips']}
+
+    payload = {}
+    if include_trips:
+        trips_payload = query_trips_payload(filters, page, per_page, sort, order, use_custom_sort)
+        payload["trips"] = trips_payload
+
+    if include_summary:
+        summary_cache_key = _filters_cache_key("dashboard_summary", filters)
+        summary_payload = _cache_get(summary_cache_key)
+        if summary_payload is None:
+            summary_payload = query_summary_payload(filters)
+            _cache_set(summary_cache_key, summary_payload, ttl_seconds=30)
+        payload["summary"] = summary_payload
+
+    _cache_set(cache_key, payload, ttl_seconds=30)
+    return jsonify(payload)
 
 @api.route('/api/heatmap', methods=['GET'])
 @handle_db_errors
@@ -353,8 +466,15 @@ def get_heatmap_data():
       200:
         description: Heatmap data points
     """
+    cache_key = _cache_key("heatmap")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
     filters = dict(request.args)
     where_clause, params = build_where_clause(filters)
+    limit = min(int(request.args.get('limit', 100)), 100)
+    params['limit'] = limit
     
     query = f"""
         SELECT 
@@ -364,16 +484,17 @@ def get_heatmap_data():
             AVG(fare_amount) as avg_fare,
             AVG(trip_duration_sec / 60.0) as avg_duration_minutes
         FROM trips t
-        LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-        LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
         WHERE {where_clause}
         GROUP BY lat, lng
         HAVING count > 5
+        ORDER BY count DESC
+        LIMIT :limit
     """
     
     with get_db_connection() as conn:
         data = [dict(row) for row in conn.execute(query, params)]
-    
+
+    _cache_set(cache_key, data, ttl_seconds=30)
     return jsonify(data)
 
 @api.route('/api/top_routes', methods=['GET'])
@@ -386,16 +507,21 @@ def get_top_routes():
       - name: limit
         in: query
         type: integer
-        default: 10
+        default: 100
         description: Number of routes to return
     responses:
       200:
         description: Top routes
     """
+    cache_key = _cache_key("top_routes")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
     filters = dict(request.args)
     where_clause, params = build_where_clause(filters)
     
-    limit = min(int(request.args.get('limit', 10)), 50)
+    limit = min(int(request.args.get('limit', 100)), 100)
     params['limit'] = limit
     
     query = f"""
@@ -409,8 +535,6 @@ def get_top_routes():
             AVG(fare_amount) as avg_fare,
             AVG(trip_duration_sec / 60.0) as avg_duration_minutes
         FROM trips t
-        LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-        LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
         WHERE {where_clause}
         GROUP BY pickup_lat, pickup_lng, dropoff_lat, dropoff_lng
         ORDER BY trip_count DESC
@@ -419,7 +543,8 @@ def get_top_routes():
     
     with get_db_connection() as conn:
         routes = [dict(row) for row in conn.execute(query, params)]
-    
+
+    _cache_set(cache_key, routes, ttl_seconds=30)
     return jsonify(routes)
 
 @api.route('/api/temporal_analysis', methods=['GET'])
@@ -443,6 +568,11 @@ def get_temporal_analysis():
       200:
         description: Temporal analysis data
     """
+    cache_key = _cache_key("temporal_analysis")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
     filters = dict(request.args)
     where_clause, params = build_where_clause(filters)
     
@@ -454,8 +584,6 @@ def get_temporal_analysis():
             AVG(tip_amount) as avg_tip,
             AVG(avg_speed_kmh) as avg_speed_kmh
         FROM trips t
-        LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-        LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
         WHERE {where_clause}
         GROUP BY pickup_hour
         ORDER BY pickup_hour
@@ -468,8 +596,6 @@ def get_temporal_analysis():
             AVG(fare_amount) as avg_fare,
             AVG(trip_duration_sec / 60.0) as avg_duration_minutes
         FROM trips t
-        LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-        LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
         WHERE {where_clause}
         GROUP BY pickup_weekday
         ORDER BY pickup_weekday
@@ -482,8 +608,6 @@ def get_temporal_analysis():
             AVG(fare_amount) as avg_fare,
             AVG(trip_distance_km) as avg_distance_km
         FROM trips t
-        LEFT JOIN zones zpu ON t.pu_location_id = zpu.location_id
-        LEFT JOIN zones zdo ON t.do_location_id = zdo.location_id
         WHERE {where_clause}
         GROUP BY month
         ORDER BY month
@@ -494,11 +618,13 @@ def get_temporal_analysis():
         daily_data = [dict(row) for row in conn.execute(daily_query, params)]
         monthly_data = [dict(row) for row in conn.execute(monthly_query, params)]
     
-    return jsonify({
+    payload = {
         'hourly': hourly_data,
         'daily': daily_data,
         'monthly': monthly_data
-    })
+    }
+    _cache_set(cache_key, payload, ttl_seconds=30)
+    return jsonify(payload)
 
 @api.route('/api/zones', methods=['GET'])
 @handle_db_errors
@@ -515,6 +641,11 @@ def get_zones():
       200:
         description: List of zones
     """
+    cache_key = _cache_key("zones")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
     borough = request.args.get('borough')
     with get_db_connection() as conn:
         if borough:
@@ -527,7 +658,9 @@ def get_zones():
                 "SELECT location_id, borough, zone, service_zone FROM zones ORDER BY borough, zone"
             ).fetchall()
     
-    return jsonify([dict(row) for row in zones])
+    payload = [dict(row) for row in zones]
+    _cache_set(cache_key, payload, ttl_seconds=300)
+    return jsonify(payload)
 
 @api.route('/api/zones/boroughs', methods=['GET'])
 @handle_db_errors
@@ -539,11 +672,18 @@ def get_boroughs():
       200:
         description: List of boroughs
     """
+    cache_key = _cache_key("boroughs")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
     with get_db_connection() as conn:
         rows = conn.execute(
             "SELECT DISTINCT borough FROM zones WHERE borough IS NOT NULL ORDER BY borough"
         ).fetchall()
-    return jsonify([row["borough"] for row in rows])
+    payload = [row["borough"] for row in rows]
+    _cache_set(cache_key, payload, ttl_seconds=300)
+    return jsonify(payload)
 
 @api.route('/api/zones/geojson', methods=['GET'])
 @handle_db_errors
@@ -564,6 +704,11 @@ def get_zones_geojson():
       200:
         description: GeoJSON FeatureCollection
     """
+    cache_key = _cache_key("zones_geojson")
+    cached_payload = _cache_get(cache_key)
+    if cached_payload is not None:
+        return jsonify(cached_payload)
+
     borough = request.args.get('borough')
     zone = request.args.get('zone')
     params = {}
@@ -598,4 +743,6 @@ def get_zones_geojson():
             }
         })
     
-    return jsonify({"type": "FeatureCollection", "features": features})
+    payload = {"type": "FeatureCollection", "features": features}
+    _cache_set(cache_key, payload, ttl_seconds=300)
+    return jsonify(payload)

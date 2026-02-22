@@ -5,12 +5,15 @@
 
 // API Configuration
 const API_BASE = 'http://localhost:5000';
+const CLEANED_DATA_BASE = `${API_BASE}/cleaned_data`;
+const ZONES_CSV_PATH = `${CLEANED_DATA_BASE}/zones_cleaned.csv`;
+const ZONES_GEOJSON_PATH = `${CLEANED_DATA_BASE}/zones_geo_cleaned.geojson`;
 
 // Global State Management
 const AppState = {
     allTrips: [],
     currentPage: 1,
-    tripsPerPage: 50,
+    tripsPerPage: 100,
     totalTrips: 0,
     totalPages: 1,
     sortColumn: 'pickup_datetime',
@@ -33,15 +36,22 @@ const AppState = {
     },
     charts: {},
     map: null,
+    mapRenderer: null,
+    mapLayerGroup: null,
     mapMarkers: [],
     mapMode: 'pickups',
-    mapLimit: 100,
+    mapLimit: 50,
     useCustomSort: false,
     summary: null,
     zones: [],
     boroughs: [],
+    zonesGeoJson: null,
     zoneLayer: null,
-    zoneLayerVisible: false
+    zoneLayerVisible: false,
+    zoneLayerKey: null,
+    dashboardCache: {},
+    dashboardController: null,
+    filterDebounceTimer: null
 };
 
 // Prefer the canonical id field from the API, but fall back for legacy data.
@@ -76,18 +86,112 @@ async function initializeApp() {
         console.log('Fetching trip data from API...');
         
         await fetchZonesMetadata();
-        await Promise.all([
-            fetchTrips(),
-            fetchSummary()
-        ]);
+        await fetchDashboard(1, false, true);
         
         updateDashboard();
+        fetchDashboard(1, true, false).then(() => {
+            updateHeroStats();
+            updateCharts();
+        }).catch((error) => {
+            console.error('Error refreshing summary payload:', error);
+        });
         
         console.log(`✓ Loaded ${AppState.totalTrips.toLocaleString()} total trips`);
         
     } catch (error) {
         console.error('Error initializing app:', error);
         showErrorMessage('Failed to load data. Please check backend connection.');
+    }
+}
+
+function applyDashboardPayload(payload) {
+    const summary = payload && payload.summary ? payload.summary : null;
+    const tripsPart = payload && payload.trips ? payload.trips : null;
+
+    if (summary) {
+        AppState.summary = summary;
+    }
+    if (tripsPart) {
+        const pagination = tripsPart.pagination || {};
+        AppState.allTrips = tripsPart.data || [];
+        AppState.totalTrips = pagination.total || 0;
+        AppState.totalPages = pagination.total_pages || 1;
+        AppState.currentPage = pagination.page || 1;
+    }
+}
+
+function buildDashboardParams(page = 1, includeSummary = true, includeTrips = true) {
+    const params = new URLSearchParams({
+        page: page,
+        per_page: AppState.tripsPerPage,
+        sort: AppState.sortColumn,
+        order: AppState.sortDirection,
+        include_summary: includeSummary ? 'true' : 'false',
+        include_trips: includeTrips ? 'true' : 'false'
+    });
+    appendTripFilters(params);
+    if (AppState.useCustomSort) {
+        params.append('custom_sort', 'true');
+    }
+    return params;
+}
+
+async function fetchDashboard(page = 1, includeSummary = true, includeTrips = true) {
+    const params = buildDashboardParams(page, includeSummary, includeTrips);
+    const cacheKey = params.toString();
+    const now = Date.now();
+    const cacheEntry = AppState.dashboardCache[cacheKey];
+    if (cacheEntry && (now - cacheEntry.ts) < 15000) {
+        applyDashboardPayload(cacheEntry.payload);
+        return cacheEntry.payload;
+    }
+
+    if (AppState.dashboardController) {
+        AppState.dashboardController.abort();
+    }
+    const controller = new AbortController();
+    AppState.dashboardController = controller;
+
+    try {
+        const response = await fetch(`${API_BASE}/api/dashboard?${cacheKey}`, {
+            signal: controller.signal
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const payload = await response.json();
+        AppState.dashboardCache[cacheKey] = {
+            ts: now,
+            payload: payload
+        };
+        const cacheKeys = Object.keys(AppState.dashboardCache);
+        if (cacheKeys.length > 100) {
+            let oldestKey = cacheKeys[0];
+            let oldestTs = AppState.dashboardCache[oldestKey].ts;
+            let idx = 1;
+            while (idx < cacheKeys.length) {
+                const key = cacheKeys[idx];
+                const ts = AppState.dashboardCache[key].ts;
+                if (ts < oldestTs) {
+                    oldestTs = ts;
+                    oldestKey = key;
+                }
+                idx += 1;
+            }
+            delete AppState.dashboardCache[oldestKey];
+        }
+        applyDashboardPayload(payload);
+        return payload;
+    } catch (error) {
+        if (error && error.name === 'AbortError') {
+            return null;
+        }
+        console.error('Error fetching dashboard payload:', error);
+        throw error;
+    } finally {
+        if (AppState.dashboardController === controller) {
+            AppState.dashboardController = null;
+        }
     }
 }
 
@@ -100,12 +204,7 @@ async function fetchTrips(page = 1) {
             order: AppState.sortDirection
         });
         
-        // Add filters
-        Object.entries(AppState.filters).forEach(([key, value]) => {
-            if (value !== null && value !== '' && value !== 'all') {
-                params.append(key, value);
-            }
-        });
+        appendTripFilters(params);
         
         // Add custom sort if enabled
         if (AppState.useCustomSort) {
@@ -164,21 +263,156 @@ async function fetchSummary() {
 
 async function fetchZonesMetadata() {
     try {
-        const [boroughRes, zonesRes] = await Promise.all([
-            fetch(`${API_BASE}/api/zones/boroughs`),
-            fetch(`${API_BASE}/api/zones`)
-        ]);
-        
-        AppState.boroughs = boroughRes.ok ? await boroughRes.json() : [];
-        AppState.zones = zonesRes.ok ? await zonesRes.json() : [];
-        
+        const zonesCsvResponse = await fetch(ZONES_CSV_PATH);
+        if (!zonesCsvResponse.ok) {
+            throw new Error(`Unable to load ${ZONES_CSV_PATH}`);
+        }
+        const zonesCsvText = await zonesCsvResponse.text();
+        AppState.zones = parseZonesCsv(zonesCsvText);
+        AppState.zones = ManualAlgorithms.mergeSortObjectsByField(AppState.zones, 'zone', true);
+
+        const boroughValues = ManualAlgorithms.uniqueFieldValues(AppState.zones, 'borough');
+        const boroughRecords = [];
+        let index = 0;
+        while (index < boroughValues.length) {
+            boroughRecords.push({ borough: boroughValues[index] });
+            index += 1;
+        }
+        const sortedBoroughRecords = ManualAlgorithms.mergeSortObjectsByField(boroughRecords, 'borough', true);
+        AppState.boroughs = [];
+        index = 0;
+        while (index < sortedBoroughRecords.length) {
+            AppState.boroughs.push(sortedBoroughRecords[index].borough);
+            index += 1;
+        }
+
+        const zonesGeoResponse = await fetch(ZONES_GEOJSON_PATH);
+        if (!zonesGeoResponse.ok) {
+            throw new Error(`Unable to load ${ZONES_GEOJSON_PATH}`);
+        }
+        AppState.zonesGeoJson = await zonesGeoResponse.json();
+
         populateBoroughSelects();
         populateZoneSelects();
-        
-        console.log('✓ Zone metadata loaded');
+
+        console.log('Zone metadata loaded from cleaned_data');
     } catch (error) {
         console.error('Error fetching zone metadata:', error);
     }
+}
+
+function parseZonesCsv(csvText) {
+    const rows = [];
+    const lines = csvText.replace(/\r/g, '').split('\n');
+    if (lines.length <= 1) {
+        return rows;
+    }
+
+    let index = 1;
+    while (index < lines.length) {
+        const line = lines[index];
+        if (!line || !line.trim()) {
+            index += 1;
+            continue;
+        }
+
+        const columns = line.split(',');
+        if (columns.length >= 4) {
+            const locationId = Number(columns[0].trim());
+            if (!Number.isNaN(locationId)) {
+                rows.push({
+                    location_id: locationId,
+                    borough: columns[1].trim(),
+                    zone: columns[2].trim(),
+                    service_zone: columns[3].trim()
+                });
+            }
+        }
+        index += 1;
+    }
+
+    return rows;
+}
+
+function appendTripFilters(params) {
+    const directFilterKeys = [
+        'start_date',
+        'end_date',
+        'min_distance',
+        'max_distance',
+        'min_fare',
+        'max_fare',
+        'is_peak_hour',
+        'is_weekend',
+        'passenger_count',
+        'payment_type'
+    ];
+
+    let index = 0;
+    while (index < directFilterKeys.length) {
+        const key = directFilterKeys[index];
+        const value = AppState.filters[key];
+        if (value !== null && value !== '' && value !== 'all') {
+            params.append(key, value);
+        }
+        index += 1;
+    }
+
+    const pickupZone = AppState.filters.pickup_zone;
+    const dropoffZone = AppState.filters.dropoff_zone;
+    const pickupBorough = AppState.filters.pickup_borough;
+    const dropoffBorough = AppState.filters.dropoff_borough;
+
+    if (pickupZone) {
+        const zone = findZoneByName(pickupZone, pickupBorough);
+        if (zone) {
+            params.append('pu_location_id', zone.location_id);
+        }
+    } else if (pickupBorough) {
+        const pickupIds = getLocationIdsByBorough(pickupBorough);
+        if (pickupIds.length > 0) {
+            params.append('pu_location_ids', pickupIds.join(','));
+        }
+    }
+
+    if (dropoffZone) {
+        const zone = findZoneByName(dropoffZone, dropoffBorough);
+        if (zone) {
+            params.append('do_location_id', zone.location_id);
+        }
+    } else if (dropoffBorough) {
+        const dropoffIds = getLocationIdsByBorough(dropoffBorough);
+        if (dropoffIds.length > 0) {
+            params.append('do_location_ids', dropoffIds.join(','));
+        }
+    }
+}
+
+function findZoneByName(zoneName, boroughName = null) {
+    let index = 0;
+    while (index < AppState.zones.length) {
+        const zone = AppState.zones[index];
+        if (zone.zone === zoneName) {
+            if (!boroughName || boroughName === 'all' || zone.borough === boroughName) {
+                return zone;
+            }
+        }
+        index += 1;
+    }
+    return null;
+}
+
+function getLocationIdsByBorough(boroughName) {
+    const ids = [];
+    let index = 0;
+    while (index < AppState.zones.length) {
+        const zone = AppState.zones[index];
+        if (zone.borough === boroughName) {
+            ids.push(zone.location_id);
+        }
+        index += 1;
+    }
+    return ids;
 }
 
 // ==========================================
@@ -273,13 +507,20 @@ async function handleFilterChange() {
     // Reset to page 1
     AppState.currentPage = 1;
     
-    // Fetch new data
-    await fetchTrips(1);
-    await fetchSummary();
-    
-    // Update UI
-    updateDashboard();
-    updateZoneLayer();
+    if (AppState.filterDebounceTimer) {
+        clearTimeout(AppState.filterDebounceTimer);
+    }
+    AppState.filterDebounceTimer = setTimeout(async () => {
+        await fetchDashboard(1, false, true);
+        updateDashboard();
+        updateZoneLayer();
+        fetchDashboard(1, true, false).then(() => {
+            updateHeroStats();
+            updateCharts();
+        }).catch((error) => {
+            console.error('Error refreshing summary payload:', error);
+        });
+    }, 180);
 }
 
 function resetFilters() {
@@ -449,16 +690,21 @@ function updatePagination() {
 }
 
 async function changePage(delta) {
-    const newPage = AppState.currentPage + delta;
-    
-    if (newPage >= 1 && newPage <= AppState.totalPages) {
+    const currentPage = Number(AppState.currentPage) || 1;
+    const totalPages = Number(AppState.totalPages) || 1;
+    const newPage = currentPage + delta;
+
+    if (newPage >= 1 && newPage <= totalPages) {
         await goToPage(newPage);
     }
 }
 
 async function goToPage(page) {
-    AppState.currentPage = page;
-    await fetchTrips(page);
+    const nextPage = Number(page);
+    if (!Number.isInteger(nextPage) || nextPage < 1) return;
+
+    AppState.currentPage = nextPage;
+    await fetchTrips(nextPage);
     updateDashboard();
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -653,6 +899,8 @@ function initializeMap() {
     if (!mapElement) return;
     
     AppState.map = L.map('trip-map').setView([40.7580, -73.9855], 12);
+    AppState.mapRenderer = L.canvas({ padding: 0.5 });
+    AppState.mapLayerGroup = L.layerGroup().addTo(AppState.map);
     
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         attribution: '© OpenStreetMap contributors',
@@ -676,10 +924,9 @@ function setMapMode(mode) {
 function updateMap() {
     if (!AppState.map) return;
     
-    // Clear old markers
-    AppState.mapMarkers.forEach(marker => {
-        AppState.map.removeLayer(marker);
-    });
+    if (AppState.mapLayerGroup) {
+        AppState.mapLayerGroup.clearLayers();
+    }
     AppState.mapMarkers = [];
     
     const tripsToShow = AppState.allTrips.slice(0, AppState.mapLimit);
@@ -705,8 +952,9 @@ function showPickupMarkers(trips) {
             color: '#fff',
             weight: 2,
             opacity: 1,
-            fillOpacity: 0.7
-        }).addTo(AppState.map);
+            fillOpacity: 0.7,
+            renderer: AppState.mapRenderer
+        }).addTo(AppState.mapLayerGroup);
         
         marker.bindPopup(`
             <div>
@@ -731,8 +979,9 @@ function showDropoffMarkers(trips) {
             color: '#fff',
             weight: 2,
             opacity: 1,
-            fillOpacity: 0.7
-        }).addTo(AppState.map);
+            fillOpacity: 0.7,
+            renderer: AppState.mapRenderer
+        }).addTo(AppState.mapLayerGroup);
         
         marker.bindPopup(`
             <div>
@@ -754,8 +1003,8 @@ function showTripRoutes(trips) {
         const line = L.polyline(
             [[trip.pickup_latitude, trip.pickup_longitude],
              [trip.dropoff_latitude, trip.dropoff_longitude]],
-            { color: '#10B981', weight: 2, opacity: 0.5 }
-        ).addTo(AppState.map);
+            { color: '#10B981', weight: 2, opacity: 0.5, renderer: AppState.mapRenderer }
+        ).addTo(AppState.mapLayerGroup);
         
         line.bindPopup(`
             <div>
@@ -803,16 +1052,18 @@ function updateZoneOptions(selectId, borough) {
     if (!select) return;
     
     select.innerHTML = '<option value="all">All Zones</option>';
-    const zones = borough && borough !== 'all'
-        ? AppState.zones.filter(z => z.borough === borough)
-        : AppState.zones;
-    
-    zones.forEach(zone => {
-        const option = document.createElement('option');
-        option.value = zone.zone;
-        option.textContent = zone.zone;
-        select.appendChild(option);
-    });
+    let index = 0;
+    while (index < AppState.zones.length) {
+        const zone = AppState.zones[index];
+        const matchBorough = !borough || borough === 'all' || zone.borough === borough;
+        if (matchBorough) {
+            const option = document.createElement('option');
+            option.value = zone.zone;
+            option.textContent = zone.zone;
+            select.appendChild(option);
+        }
+        index += 1;
+    }
 }
 
 async function updateZoneLayer() {
@@ -823,42 +1074,52 @@ async function updateZoneLayer() {
             AppState.map.removeLayer(AppState.zoneLayer);
             AppState.zoneLayer = null;
         }
+        AppState.zoneLayerKey = null;
         return;
     }
     
-    const params = new URLSearchParams();
-    if (AppState.filters.pickup_borough) {
-        params.append('borough', AppState.filters.pickup_borough);
-    } else if (AppState.filters.dropoff_borough) {
-        params.append('borough', AppState.filters.dropoff_borough);
+    const sourceGeoJson = AppState.zonesGeoJson;
+    if (!sourceGeoJson || !Array.isArray(sourceGeoJson.features)) {
+        return;
     }
-    if (AppState.filters.pickup_zone) {
-        params.append('zone', AppState.filters.pickup_zone);
-    } else if (AppState.filters.dropoff_zone) {
-        params.append('zone', AppState.filters.dropoff_zone);
+
+    const boroughFilter = AppState.filters.pickup_borough || AppState.filters.dropoff_borough;
+    const zoneFilter = AppState.filters.pickup_zone || AppState.filters.dropoff_zone;
+    const zoneLayerKey = `${boroughFilter || ''}|${zoneFilter || ''}`;
+    if (AppState.zoneLayer && AppState.zoneLayerKey === zoneLayerKey) {
+        return;
     }
-    
-    try {
-        const response = await fetch(`${API_BASE}/api/zones/geojson?${params.toString()}`);
-        if (!response.ok) return;
-        const geojson = await response.json();
-        
-        if (AppState.zoneLayer) {
-            AppState.map.removeLayer(AppState.zoneLayer);
+    const filteredFeatures = [];
+
+    let index = 0;
+    while (index < sourceGeoJson.features.length) {
+        const feature = sourceGeoJson.features[index];
+        const props = feature.properties || {};
+        const boroughMatch = !boroughFilter || props.borough === boroughFilter;
+        const zoneMatch = !zoneFilter || props.zone === zoneFilter;
+        if (boroughMatch && zoneMatch) {
+            filteredFeatures.push(feature);
         }
-        
-        AppState.zoneLayer = L.geoJSON(geojson, {
-            style: {
-                color: '#111827',
-                weight: 1,
-                opacity: 0.6,
-                fillColor: '#60A5FA',
-                fillOpacity: 0.1
-            }
-        }).addTo(AppState.map);
-    } catch (error) {
-        console.error('Error loading zone layer:', error);
+        index += 1;
     }
+
+    if (AppState.zoneLayer) {
+        AppState.map.removeLayer(AppState.zoneLayer);
+    }
+
+    AppState.zoneLayer = L.geoJSON({
+        type: 'FeatureCollection',
+        features: filteredFeatures
+    }, {
+        style: {
+            color: '#111827',
+            weight: 1,
+            opacity: 0.6,
+            fillColor: '#60A5FA',
+            fillOpacity: 0.1
+        }
+    }).addTo(AppState.map);
+    AppState.zoneLayerKey = zoneLayerKey;
 }
 
 // ==========================================
@@ -908,3 +1169,4 @@ function showErrorMessage(message) {
 }
 
 console.log('NYC Urban Mobility Explorer - Ready!');
+
