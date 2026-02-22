@@ -13,6 +13,8 @@ data/cleaned/
 data/processed/
 data/taxi_zones/
 data/logs/
+database/
+data/
 *.csv
 *.parquet
 *.geojson
@@ -26,3 +28,5 @@ data/logs/
 *.db
 *.zip
 *.part
+*.db
+*.log
