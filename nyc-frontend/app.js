@@ -1,8 +1,3 @@
-// ==========================================
-// NYC URBAN MOBILITY EXPLORER
-// Frontend Application - Integrated with Backend API
-// ==========================================
-
 // API Configuration
 const API_BASE = 'http://localhost:5000';
 const CLEANED_DATA_BASE = `${API_BASE}/cleaned_data`;
@@ -59,9 +54,8 @@ function getTripId(trip) {
     return trip.id ?? trip.trip_id;
 }
 
-// ==========================================
 // INITIALIZATION
-// ==========================================
+
 document.addEventListener('DOMContentLoaded', async () => {
     console.log('NYC Urban Mobility Explorer - Initializing...');
     
@@ -78,9 +72,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     initializeMap();
 });
 
-// ==========================================
 // DATA FETCHING
-// ==========================================
+
 async function initializeApp() {
     try {
         console.log('Fetching trip data from API...');
@@ -415,9 +408,8 @@ function getLocationIdsByBorough(boroughName) {
     return ids;
 }
 
-// ==========================================
 // EVENT LISTENERS
-// ==========================================
+
 function setupEventListeners() {
     // Filter changes
     document.getElementById('min-distance')?.addEventListener('change', handleFilterChange);
@@ -476,9 +468,8 @@ function setupEventListeners() {
     });
 }
 
-// ==========================================
 // FILTER HANDLING
-// ==========================================
+
 async function handleFilterChange() {
     // Update filter state from inputs
     AppState.filters.min_distance = parseFloat(document.getElementById('min-distance')?.value || 0);
@@ -561,9 +552,8 @@ function resetFilters() {
     handleFilterChange();
 }
 
-// ==========================================
 // DASHBOARD UPDATE
-// ==========================================
+
 function updateDashboard() {
     updateHeroStats();
     updateTable();
@@ -590,9 +580,9 @@ function updateHeroStats() {
     if (totalRevenueEl) totalRevenueEl.textContent = '$' + avgFare.toFixed(2);
 }
 
-// ==========================================
+
 // TABLE RENDERING
-// ==========================================
+
 function updateTable() {
     const tbody = document.getElementById('trips-table-body');
     if (!tbody) return;
@@ -657,9 +647,8 @@ function formatDuration(minutes) {
     return `${hours}h ${mins}m`;
 }
 
-// ==========================================
 // PAGINATION
-// ==========================================
+
 function updatePagination() {
     const prevBtn = document.getElementById('prev-page');
     const nextBtn = document.getElementById('next-page');
@@ -709,9 +698,8 @@ async function goToPage(page) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-// ==========================================
 // TRIP DETAILS MODAL
-// ==========================================
+
 function showTripDetails(tripId) {
     const trip = AppState.allTrips.find(t => getTripId(t) === tripId);
     if (!trip) return;
@@ -800,9 +788,8 @@ function showTripDetails(tripId) {
 // Make function globally accessible
 window.showTripDetails = showTripDetails;
 
-// ==========================================
 // CHART INITIALIZATION
-// ==========================================
+
 function initializeCharts() {
     // Hourly Trips Chart
     const hourlyCtx = document.getElementById('hourly-trips-chart');
@@ -891,9 +878,8 @@ function updateCharts() {
     }
 }
 
-// ==========================================
 // MAP FUNCTIONALITY
-// ==========================================
+
 function initializeMap() {
     const mapElement = document.getElementById('trip-map');
     if (!mapElement) return;
@@ -1122,9 +1108,8 @@ async function updateZoneLayer() {
     AppState.zoneLayerKey = zoneLayerKey;
 }
 
-// ==========================================
 // EXPORT FUNCTIONALITY
-// ==========================================
+
 function exportToCSV() {
     const headers = [
         'Trip ID', 'Pickup DateTime', 'Dropoff DateTime',
@@ -1161,12 +1146,9 @@ function exportToCSV() {
     window.URL.revokeObjectURL(url);
 }
 
-// ==========================================
 // UTILITY FUNCTIONS
-// ==========================================
+
 function showErrorMessage(message) {
     alert(message);
 }
-
 console.log('NYC Urban Mobility Explorer - Ready!');
-

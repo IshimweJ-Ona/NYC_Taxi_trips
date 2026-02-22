@@ -1,4 +1,4 @@
-// Manual algorithms for frontend data processing (no Array.sort usage).
+// Manual algorithms for frontend data processing no Array.sort usage.
 (function attachManualAlgorithms(globalScope) {
     function compareValues(left, right, ascending) {
         if (ascending) {
